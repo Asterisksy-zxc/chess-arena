@@ -1,7 +1,7 @@
 // Проверка движка: perft на эталонных позициях (классика) + сценарии арены.
 import {
   createGame, fromFEN, perft, applyMove, legalMoves, gameStatus, inCheck,
-  directorStep, sqName, checkers,
+  sqName,
 } from '../js/engine.js';
 
 let failed = 0;
@@ -65,82 +65,58 @@ const play = (s, ...moves) => moves.reduce((st, mv) => {
 
 // ---------------- Арена
 {
-  const s = createGame('arena');
+  const s = createGame('arena', 7);
   ok(s.N === 10 && s.board[5]?.t === 'k' && s.board[95]?.t === 'k', 'арена 10×10, короли на f1/f10');
-  ok(legalMoves(s).length === 24, `ходов на старте арены: ${legalMoves(s).length} (16 пешечных + 6 конских + 2 ладейных)`);
+  ok(legalMoves(s).length === 24, `ходов на старте арены: ${legalMoves(s).length}`);
+  ok(Object.keys(s.cells).length === 6, 'на старте 6 клеток событий');
   const t = Date.now();
   const p3 = perft(s, 3);
   ok(p3 > 0, `perft арены d3 = ${p3} за ${Date.now() - t}ms`);
 }
 {
-  // Рывок: ладья b1-a1, ..., a1-a5 (клетка рывка) -> ещё ход
-  let s = createGame('arena');
-  s = play(s, 'b1a1', 'b10a10', 'a1a5');
-  ok(s.turn === 'w' && s.bonus === 40, 'рывок: ход остаётся за белыми');
-  const bonusMoves = legalMoves(s);
-  ok(bonusMoves.some((m) => m.pass) && bonusMoves.every((m) => m.pass || !m.capture), 'рывок: есть пропуск, нет взятий');
-  s = applyMove(s, bonusMoves.find((m) => m.pass));
-  ok(s.turn === 'b' && s.bonus === -1, 'рывок: после пропуска ход чёрных');
-}
-{
-  // Портал: конь c1 -> d3 -> ... доходим до c5
-  let s = createGame('arena');
-  s = play(s, 'c2c4', 'h9h7', 'c4c5');
-  ok(!s.board[42] && s.board[57]?.t === 'p' && s.board[57]?.c === 'w', 'портал: пешка c5 переносится на h6');
-}
-{
-  // Щит: f-пешка f2-f4-f5
-  let s = createGame('arena');
-  s = play(s, 'f2f4', 'e9e8', 'f4f5');
-  ok(s.board[45]?.shieldUntil > s.ply, 'щит повешен на пешку f5');
-}
-{
-  // Капкан: e2-e4-e5, пешка вмерзает на 2 своих хода
-  let s = createGame('arena');
-  s = play(s, 'e2e4', 'b9b8', 'e4e5', 'b8b7');
-  ok(!legalMoves(s).some((m) => m.from === 44), 'капкан: замороженная пешка не ходит');
-  s = play(s, 'b2b3', 'c9c8', 'b3b4', 'c8c7');
-  ok(legalMoves(s).some((m) => m.from === 44), 'капкан: через 2 хода пешка оттаяла');
-}
-{
-  // Событие: режиссёр объявляет и запускает событие; ночь ограничивает дальность
-  let s = createGame('arena');
-  s = { ...s, ply: 6, nextEventPly: 6, deck: ['night'] };
-  s = directorStep(s, () => 0.5);
-  ok(s.event?.type === 'night' && s.event.phase === 'announced', 'ночь объявлена');
-  s = play(s, 'h1g3', 'h10g8', 'g3h5', 'g8i7');
-  ok(s.night === true, 'ночь наступила через 4 полухода');
-}
-{
-  // Метеорит: детерминированный удар по объявленным клеткам, король не страдает
-  let s = createGame('arena');
-  s = { ...s, ply: 6, nextEventPly: 6, deck: ['meteor'] };
-  s = directorStep(s, Math.random);
+  // Красная клетка b5: метеориты на половину чёрных, удар через 4 полухода
+  let s = play(createGame('arena', 7), 'b2b4', 'j9j8'.replace('j9j8', 'c9c8'), 'b4b5');
+  ok(s.event?.type === 'meteor' && s.event.by === 'w', 'красная клетка запустила метеориты');
+  ok(s.event.targets.length === 3 && s.event.targets.every((t) => Math.floor(t / 10) >= 5), 'цели на половине чёрных: ' + s.event.targets.map((t) => sqName(s, t)).join(' '));
+  const again = play(createGame('arena', 7), 'b2b4', 'c9c8', 'b4b5');
+  ok(JSON.stringify(again.event.targets) === JSON.stringify(s.event.targets), 'цели детерминированы зерном');
   const targets = s.event.targets;
-  ok(targets.length >= 2, 'метеориты нацелены: ' + targets.map((t) => sqName(s, t)).join(' '));
-  for (let i = 0; i < 4; i++) {
-    const ms = legalMoves(s).filter((m) => !targets.includes(m.to));
-    s = applyMove(s, ms[0]);
-  }
-  ok(targets.every((t) => s.craters[t] !== undefined || s.board[t]), 'кратеры на месте ударов');
-  ok(!inCheck(s, 'b') || checkers(s, 'b').length > 0, 'состояние после удара корректно');
+  for (let i = 0; i < 4; i++) s = applyMove(s, legalMoves(s).find((m) => !targets.includes(m.to) && !s.cells[m.to]));
+  ok(!s.event && targets.every((t) => s.craters[t] !== undefined || s.board[t]?.t === 'k'), 'метеориты упали, на их месте кратеры');
+}
+{
+  // Синяя клетка g5: туман для чёрных
+  let s = play(createGame('arena', 7), 'g2g4', 'c9c8', 'g4g5');
+  ok(s.fog === 'b' && s.event?.type === 'fog', 'синяя клетка ослепила чёрных');
+  s = play(s, 'c8c7', 'h2h3', 'c7c6', 'h3h4', 'b9b8');
+  ok(s.fog === null && !s.event, 'туман рассеялся через 3 хода соперника');
+}
+{
+  // Фиолетовая клетка e5: ночь, дальность ограничена
+  let s = play(createGame('arena', 7), 'e2e4', 'c9c8', 'e4e5');
+  ok(s.night === true, 'фиолетовая клетка включила ночь');
+  ok(!legalMoves(s).some((m) => m.from === 4 && Math.abs(Math.floor(m.to / 10) - 0) > 3), 'ферзь ночью ходит не дальше 3 клеток');
+  s = play(s, 'c8c7', 'h2h3');
+  const busy = play(s, 'g9g7'.replace('g9g7', 'b9b8'));
+  ok(busy.night === true, 'пока идёт событие, другие клетки не срабатывают');
 }
 {
   // Случайная партия: движок не ломается и не допускает взятия короля
-  for (let g = 0; g < 30; g++) {
-    let s = createGame('arena');
-    for (let i = 0; i < 160; i++) {
-      s = directorStep(s);
+  for (let g = 0; g < 40; g++) {
+    let s = createGame('arena', g * 977 + 13);
+    let triggered = 0;
+    for (let i = 0; i < 180; i++) {
       const st = gameStatus(s);
       if (st.over) break;
       const m = st.moves[Math.floor(Math.random() * st.moves.length)];
       const n = applyMove(s, m);
       if (inCheck(n, s.turn)) { ok(false, 'нелегальный ход прошёл фильтр'); break; }
       if (n.board.filter((p) => p && p.t === 'k').length !== 2) { ok(false, 'король исчез'); break; }
+      if (n.fx.some((f) => f.kind === 'trigger')) triggered++;
       s = n;
     }
   }
-  ok(true, '30 случайных партий на арене без ошибок');
+  ok(true, '40 случайных партий на арене без ошибок');
 }
 
 console.log(failed ? `\nПровалено: ${failed}` : '\nВсе тесты пройдены');

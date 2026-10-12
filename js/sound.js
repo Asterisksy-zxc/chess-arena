@@ -1,4 +1,4 @@
-// Небольшой синтезатор звуков на WebAudio — без внешних файлов.
+// Чиптюн-звуки на WebAudio: квадратная волна и шум, как у 8-битных приставок.
 let ctx = null;
 let muted = false;
 try { muted = localStorage.getItem('arena.muted') === '1'; } catch { /* приватный режим */ }
@@ -13,7 +13,7 @@ function ac() {
   return ctx;
 }
 
-function tone(freq, dur, { type = 'sine', gain = 0.12, slide = 0, delay = 0 } = {}) {
+function tone(freq, dur, { type = 'square', gain = 0.06, slide = 0, delay = 0 } = {}) {
   if (muted) return;
   const a = ac();
   if (!a) return;
@@ -22,23 +22,29 @@ function tone(freq, dur, { type = 'sine', gain = 0.12, slide = 0, delay = 0 } = 
   const g = a.createGain();
   o.type = type;
   o.frequency.setValueAtTime(freq, t);
-  if (slide) o.frequency.exponentialRampToValueAtTime(Math.max(30, freq + slide), t + dur);
-  g.gain.setValueAtTime(0.0001, t);
-  g.gain.exponentialRampToValueAtTime(gain, t + 0.01);
-  g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  if (slide) o.frequency.linearRampToValueAtTime(Math.max(30, freq + slide), t + dur);
+  g.gain.setValueAtTime(gain, t);
+  g.gain.setValueAtTime(gain, t + dur * 0.7);
+  g.gain.linearRampToValueAtTime(0.0001, t + dur);
   o.connect(g).connect(a.destination);
   o.start(t);
   o.stop(t + dur + 0.02);
 }
 
-function noise(dur, { gain = 0.15, freq = 1500, delay = 0 } = {}) {
+function noise(dur, { gain = 0.12, freq = 3000, delay = 0 } = {}) {
   if (muted) return;
   const a = ac();
   if (!a) return;
   const t = a.currentTime + delay;
-  const buf = a.createBuffer(1, Math.max(1, Math.floor(a.sampleRate * dur)), a.sampleRate);
+  const len = Math.max(1, Math.floor(a.sampleRate * dur));
+  const buf = a.createBuffer(1, len, a.sampleRate);
   const d = buf.getChannelData(0);
-  for (let i = 0; i < d.length; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / d.length);
+  // «ступенчатый» шум — как у NES
+  let v = 0;
+  for (let i = 0; i < len; i++) {
+    if (i % 24 === 0) v = Math.random() * 2 - 1;
+    d[i] = v * (1 - i / len);
+  }
   const src = a.createBufferSource();
   src.buffer = buf;
   const f = a.createBiquadFilter();
@@ -50,6 +56,8 @@ function noise(dur, { gain = 0.15, freq = 1500, delay = 0 } = {}) {
   src.start(t);
 }
 
+const arp = (notes, step, opts) => notes.forEach((f, i) => tone(f, step, { ...opts, delay: i * step }));
+
 export const sound = {
   get muted() { return muted; },
   toggle() {
@@ -59,15 +67,19 @@ export const sound = {
     return muted;
   },
   unlock() { ac(); },
-  select() { tone(740, 0.04, { gain: 0.04 }); },
-  move() { noise(0.05, { gain: 0.25, freq: 2400 }); tone(420, 0.05, { type: 'triangle', gain: 0.06 }); },
-  capture() { noise(0.12, { gain: 0.35, freq: 1200 }); tone(200, 0.12, { type: 'square', gain: 0.05, slide: -80 }); },
-  check() { tone(880, 0.09, { type: 'sawtooth', gain: 0.05 }); tone(660, 0.16, { type: 'sawtooth', gain: 0.05, delay: 0.09 }); },
-  magic() { [660, 880, 1320].forEach((f, i) => tone(f, 0.16, { gain: 0.06, delay: i * 0.06 })); },
-  freeze() { [1600, 1200, 900].forEach((f, i) => tone(f, 0.12, { type: 'triangle', gain: 0.05, delay: i * 0.05 })); },
-  warp() { tone(300, 0.35, { gain: 0.08, slide: 900 }); },
-  announce() { tone(392, 0.22, { type: 'triangle', gain: 0.09 }); tone(523, 0.3, { type: 'triangle', gain: 0.09, delay: 0.18 }); },
-  event() { tone(180, 0.7, { gain: 0.12, slide: 360 }); noise(0.6, { gain: 0.06, freq: 700 }); },
-  boom() { noise(0.6, { gain: 0.5, freq: 500 }); tone(90, 0.45, { gain: 0.3, slide: -50 }); },
-  end() { [523, 659, 784, 1046].forEach((f, i) => tone(f, 0.28, { type: 'triangle', gain: 0.08, delay: i * 0.12 })); },
+  select() { tone(880, 0.03, { gain: 0.03 }); },
+  move() { tone(330, 0.04, { gain: 0.05 }); tone(495, 0.05, { gain: 0.05, delay: 0.04 }); },
+  capture() { noise(0.12, { gain: 0.18, freq: 2500 }); tone(220, 0.1, { gain: 0.05, slide: -120 }); },
+  check() { arp([988, 740, 988], 0.07, { gain: 0.045 }); },
+  start() { arp([523, 659, 784, 1046], 0.07, { gain: 0.05 }); },
+  trigger(type) {
+    if (type === 'meteor') { arp([880, 660, 440, 330], 0.06, { gain: 0.05 }); noise(0.3, { gain: 0.08, freq: 1500, delay: 0.1 }); }
+    else if (type === 'fog') { noise(0.6, { gain: 0.1, freq: 900 }); arp([392, 349, 330], 0.12, { type: 'triangle', gain: 0.07 }); }
+    else { arp([784, 622, 523, 392, 311], 0.08, { type: 'triangle', gain: 0.07 }); }
+  },
+  boom() { noise(0.45, { gain: 0.3, freq: 900 }); tone(110, 0.3, { gain: 0.08, slide: -70 }); },
+  end(win) {
+    if (win) arp([523, 659, 784, 1046, 784, 1046], 0.1, { gain: 0.05 });
+    else arp([660, 880], 0.08, { gain: 0.04 });
+  },
 };

@@ -1,5 +1,5 @@
 // Бот: альфа-бета поиск + форсированные взятия. Использует тот же генератор ходов,
-// что и игра, поэтому понимает клетки силы, ночь, кратеры и объявленные метеориты.
+// что и игра, поэтому понимает клетки событий, ночь, кратеры и летящие метеориты.
 import { pseudoMoves, applyMove, inCheck, VALUES } from './engine.js';
 
 const MATE = 100000;
@@ -36,19 +36,15 @@ export function evaluate(s) {
         v += (1 - phase) * (3.5 - dist) * 12;
         break;
     }
-    if (p.shieldUntil > s.ply) v += 25;
-    if (p.frozenUntil > s.ply) v -= 40;
     score += p.c === 'w' ? v : -v;
   }
   const ev = s.event;
-  if (ev && ev.type === 'meteor' && ev.phase === 'announced') {
+  if (ev && ev.type === 'meteor') {
     for (const t of ev.targets) {
       const p = b[t];
-      if (p && p.t !== 'k' && !(p.shieldUntil > ev.startPly)) score -= (p.c === 'w' ? 1 : -1) * VALUES[p.t] * 0.8;
+      if (p && p.t !== 'k') score -= (p.c === 'w' ? 1 : -1) * VALUES[p.t] * 0.8;
     }
   }
-  if (s.eye.w) score += 15;
-  if (s.eye.b) score -= 15;
   return score + (s.turn === 'w' ? 10 : -10);
 }
 
@@ -60,8 +56,7 @@ function moveOrder(s, m) {
   }
   if (m.promo) sc += 8000 + VALUES[m.promo];
   if (m.castle) sc += 300;
-  const tile = s.mode === 'arena' && s.tiles[m.to];
-  if (tile) sc += tile.type === 'trap' ? -200 : 200;
+  if (s.mode === 'arena' && s.cells[m.to] && !s.event) sc += 150;
   return sc;
 }
 
@@ -77,7 +72,7 @@ function quiesce(s, alpha, beta, qd) {
   if (max) { if (stand >= beta) return stand; if (stand > alpha) alpha = stand; }
   else { if (stand <= alpha) return stand; if (stand < beta) beta = stand; }
   let best = stand;
-  const caps = ordered(s, pseudoMoves(s).filter((m) => m.capture || (m.promo && !m.academy)));
+  const caps = ordered(s, pseudoMoves(s).filter((m) => m.capture || m.promo));
   for (const m of caps) {
     const n = applyMove(s, m);
     if (inCheck(n, s.turn)) continue;
