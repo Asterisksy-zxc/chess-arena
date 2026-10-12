@@ -14,17 +14,17 @@ export const LEVELS = {
 };
 
 export function evaluate(s) {
-  const N = s.N, b = s.board, center = (N - 1) / 2;
+  const W = s.W, H = s.H, b = s.board, cx = (W - 1) / 2, cy = (H - 1) / 2;
   let npm = 0;
   for (const p of b) if (p && p.t !== 'p' && p.t !== 'k') npm += VALUES[p.t];
   const phase = Math.min(1, npm / 6200); // 1 — дебют, 0 — эндшпиль
   let score = 0;
-  for (let sq = 0; sq < N * N; sq++) {
+  for (let sq = 0; sq < W * H; sq++) {
     const p = b[sq];
     if (!p) continue;
-    const r = Math.floor(sq / N), c = sq % N;
-    const dist = Math.max(Math.abs(r - center), Math.abs(c - center));
-    const adv = p.c === 'w' ? r : N - 1 - r;
+    const r = Math.floor(sq / W), c = sq % W;
+    const dist = Math.max(Math.abs(r - cy), Math.abs(c - cx) * 0.8);
+    const adv = p.c === 'w' ? r : H - 1 - r;
     let v = VALUES[p.t];
     switch (p.t) {
       case 'p': v += adv * adv * (1.2 + (1 - phase) * 1.5) + (dist < 1.6 ? 12 : 0); break;
@@ -32,7 +32,7 @@ export function evaluate(s) {
       case 'b': v += (3.5 - dist) * 6; break;
       case 'q': v += (3.5 - dist) * 3 * (1 - phase); break;
       case 'k':
-        v += phase * ((adv === 0 ? 25 : -adv * 18) + Math.abs(c - center) * 5);
+        v += phase * ((adv === 0 ? 25 : -adv * 18) + Math.abs(c - cx) * 5);
         v += (1 - phase) * (3.5 - dist) * 12;
         break;
     }
@@ -56,7 +56,6 @@ function moveOrder(s, m) {
   }
   if (m.promo) sc += 8000 + VALUES[m.promo];
   if (m.castle) sc += 300;
-  if (s.mode === 'arena' && s.cells[m.to] && !s.event) sc += 150;
   return sc;
 }
 

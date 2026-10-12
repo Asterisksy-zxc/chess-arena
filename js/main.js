@@ -81,18 +81,18 @@ function askBot(state, level) {
 // ---------------------------------------------------------------- координаты
 
 function disp(sq) {
-  const N = game.state.N, r = Math.floor(sq / N), c = sq % N;
-  return flipped ? { row: r, col: N - 1 - c } : { row: N - 1 - r, col: c };
+  const { W, H } = game.state, r = Math.floor(sq / W), c = sq % W;
+  return flipped ? { row: r, col: W - 1 - c } : { row: H - 1 - r, col: c };
 }
 function sqAt(row, col) {
-  const N = game.state.N;
-  return flipped ? row * N + (N - 1 - col) : (N - 1 - row) * N + col;
+  const { W, H } = game.state;
+  return flipped ? row * W + (W - 1 - col) : (H - 1 - row) * W + col;
 }
 function sqFromPoint(x, y) {
-  const r = wrapEl.getBoundingClientRect(), N = game.state.N;
-  const col = Math.floor(((x - r.left) / r.width) * N);
-  const row = Math.floor(((y - r.top) / r.height) * N);
-  if (col < 0 || row < 0 || col >= N || row >= N) return -1;
+  const r = wrapEl.getBoundingClientRect(), { W, H } = game.state;
+  const col = Math.floor(((x - r.left) / r.width) * W);
+  const row = Math.floor(((y - r.top) / r.height) * H);
+  if (col < 0 || row < 0 || col >= W || row >= H) return -1;
   return sqAt(row, col);
 }
 
@@ -181,7 +181,7 @@ function maybeBot() {
   renderPlates();
   // в тумане бот «теряется» и играет как новичок
   const level = s.fog === s.turn ? 1 : +settings.level;
-  askBot(s, level).then((mv) => {
+  askBot({ ...s, cells: {} }, level).then((mv) => {
     if (token !== aiToken) return;
     const wait = Math.max(0, 550 - (performance.now() - t0));
     setTimeout(() => {
@@ -256,15 +256,15 @@ function hideCover() {
 }
 
 function fogVisibility(s, viewer) {
-  const N = s.N, vis = new Set();
-  for (let sq = 0; sq < N * N; sq++) {
+  const { W, H } = s, vis = new Set();
+  for (let sq = 0; sq < W * H; sq++) {
     const p = s.board[sq];
     if (!p || p.c !== viewer) continue;
-    const r = Math.floor(sq / N), c = sq % N;
+    const r = Math.floor(sq / W), c = sq % W;
     for (let dr = -1; dr <= 1; dr++) {
       for (let dc = -1; dc <= 1; dc++) {
         const rr = r + dr, cc = c + dc;
-        if (rr >= 0 && rr < N && cc >= 0 && cc < N) vis.add(rr * N + cc);
+        if (rr >= 0 && rr < H && cc >= 0 && cc < W) vis.add(rr * W + cc);
       }
     }
   }
@@ -287,13 +287,14 @@ function computeView() {
 // ---------------------------------------------------------------- отрисовка
 
 function buildBoard() {
-  const N = game.state.N;
+  const { W, H } = game.state;
   boardEl.innerHTML = '';
-  boardEl.style.gridTemplateColumns = `repeat(${N}, 1fr)`;
-  boardEl.style.gridTemplateRows = `repeat(${N}, 1fr)`;
-  squares = new Array(N * N);
-  for (let row = 0; row < N; row++) {
-    for (let col = 0; col < N; col++) {
+  boardEl.style.gridTemplateColumns = `repeat(${W}, 1fr)`;
+  boardEl.style.gridTemplateRows = `repeat(${H}, 1fr)`;
+  document.documentElement.style.setProperty('--ratio', W / H);
+  squares = new Array(W * H);
+  for (let row = 0; row < H; row++) {
+    for (let col = 0; col < W; col++) {
       const d = h('div', 'sq');
       boardEl.appendChild(d);
       squares[sqAt(row, col)] = d;
@@ -306,7 +307,7 @@ function buildBoard() {
 
 function updateSqSize() {
   if (!game) return;
-  wrapEl.style.setProperty('--sq', wrapEl.clientWidth / game.state.N + 'px');
+  wrapEl.style.setProperty('--sq', wrapEl.clientWidth / game.state.W + 'px');
 }
 
 function render(fx = []) {
@@ -324,16 +325,16 @@ function render(fx = []) {
 }
 
 function renderSquares(view) {
-  const s = game.state, N = s.N;
+  const s = game.state, { W, H } = s;
   const targets = new Map();
   if (selected >= 0) for (const m of view.moves) if (m.from === selected) targets.set(m.to, m);
   const checkSq = game.status.check ? findKing(s, s.turn) : -1;
   const ev = s.event;
   const meteor = ev && ev.type === 'meteor' ? new Set(ev.targets) : null;
   const left = meteor ? ev.impactPly - s.ply : 0;
-  for (let sq = 0; sq < N * N; sq++) {
+  for (let sq = 0; sq < W * H; sq++) {
     const d = squares[sq];
-    const r = Math.floor(sq / N), c = sq % N;
+    const r = Math.floor(sq / W), c = sq % W;
     const { row, col } = disp(sq);
     const fogged = view.vis && !view.vis.has(sq);
     const p = s.board[sq];
@@ -345,18 +346,8 @@ function renderSquares(view) {
     if (p && !(fogged && p.c !== view.viewer)) cls.push('occupied');
     let html = '';
     if (col === 0) html += `<span class="coord rank">${r + 1}</span>`;
-    if (row === N - 1) html += `<span class="coord file">${FILES[c]}</span>`;
-    const cell = s.cells[sq];
-    if (cell) {
-      const C = CELLS[cell.type];
-      html += `<div class="cell${ev ? ' locked' : ''}" style="--ec:${C.color}"><i style="${bg(iconSprite(cell.type, C.color))}"></i></div>`;
-    }
-    if (ev && ev.sq === sq && !p) {
-      const C = CELLS[ev.type];
-      html += `<div class="cell lit" style="--ec:${C.color}"><i style="${bg(iconSprite(ev.type, '#f4f4f4'))}"></i></div>`;
-    } else if (ev && ev.sq === sq) {
-      html += `<div class="cell lit" style="--ec:${CELLS[ev.type].color}"></div>`;
-    }
+    if (row === H - 1) html += `<span class="coord file">${FILES[c]}</span>`;
+    if (ev && ev.sq === sq) html += `<div class="cell lit" style="--ec:${CELLS[ev.type].color}"></div>`;
     if (s.craters[sq] !== undefined) html += `<div class="crater"><b>${s.craters[sq] - s.ply}</b></div>`;
     if (meteor && meteor.has(sq)) html += `<div class="target"><b>${left}</b></div>`;
     const t = targets.get(sq);
@@ -368,9 +359,9 @@ function renderSquares(view) {
 }
 
 function renderPieces(view, delayed) {
-  const s = game.state, N = s.N;
+  const s = game.state, { W, H } = s;
   const seen = new Set();
-  for (let sq = 0; sq < N * N; sq++) {
+  for (let sq = 0; sq < W * H; sq++) {
     const p = s.board[sq];
     if (!p) continue;
     seen.add(p.id);
@@ -379,7 +370,8 @@ function renderPieces(view, delayed) {
     const pos = `translate(${col * 100}%, ${row * 100}%)`;
     if (!e) {
       e = h('div', 'pc');
-      e.style.width = e.style.height = 100 / N + '%';
+      e.style.width = 100 / W + '%';
+      e.style.height = 100 / H + '%';
       e.style.transition = 'none';
       e.style.transform = pos;
       piecesEl.appendChild(e);
@@ -442,7 +434,8 @@ function renderEvent() {
   const ev = s.event;
   let html = '<div class="panel-title">СОБЫТИЕ</div>';
   if (!ev) {
-    html += '<div class="ev-idle"><b>ЗАТИШЬЕ</b>Встаньте фигурой на цветную клетку — она вспыхнет и запустит событие.</div>';
+    const hidden = Object.keys(s.cells).length;
+    html += `<div class="ev-idle"><b>ЗАТИШЬЕ</b>На поле спрятано клеток: <span class="hidden-count">${hidden}</span>. Наступите на такую — пол засияет, как на дискотеке, и начнётся событие.</div>`;
   } else {
     const C = CELLS[ev.type];
     const by = `Запустили ${NAME[ev.by].toLowerCase()}`;
@@ -454,7 +447,7 @@ function renderEvent() {
       left = ev.endPly - s.ply; total = ARENA.eventLength;
       text = ev.type === 'fog' ? `${by}. ${NAME[s.fog]} видят только своё окружение.` : `${by}. Дальнобойные фигуры бьют лишь на 3 клетки.`;
     }
-    html += `<div class="ev-row"><div class="ev-icon" style="${bg(iconSprite(ev.type, C.color))}"></div><div><div class="ev-name" style="color:${C.color}">${C.name.toUpperCase()}</div><div class="ev-text">${text}</div></div></div>${meter(left, total, C.color)}`;
+    html += `<div class="ev-row"><div class="ev-swatch" style="--c:${C.color}"></div><div><div class="ev-name" style="color:${C.color}">${C.name.toUpperCase()}</div><div class="ev-text">${text}</div></div></div>${meter(left, total, C.color)}`;
   }
   panel.innerHTML = html;
 }
@@ -536,7 +529,7 @@ function renderHistory() {
 
 function legendRows() {
   return Object.entries(CELLS).map(([k, C]) =>
-    `<div class="legend-row" style="--c:${C.color}"><div class="legend-sw"><i style="${bg(iconSprite(k, C.color))}"></i></div><div><b>${C.name.toUpperCase()}</b><span>${C.desc}</span></div></div>`,
+    `<div class="legend-row" style="--c:${C.color}"><div class="legend-sw"></div><div><b>${C.name.toUpperCase()}</b><span>${C.desc}</span></div></div>`,
   ).join('');
 }
 
@@ -548,10 +541,10 @@ function renderLegend() {
 // ---------------------------------------------------------------- эффекты
 
 function center(sq, clamp = false) {
-  const { row, col } = disp(sq), N = game.state.N;
-  let left = ((col + 0.5) * 100) / N;
+  const { row, col } = disp(sq), { W, H } = game.state;
+  let left = ((col + 0.5) * 100) / W;
   if (clamp) left = Math.min(80, Math.max(20, left)); // надписи не уезжают за край доски
-  return { left: left + '%', top: ((row + 0.5) * 100) / N + '%' };
+  return { left: left + '%', top: ((row + 0.5) * 100) / H + '%' };
 }
 
 function fxAt(sq, type, { text = '', color, delay = 0, life = 1400, style = '' } = {}) {
@@ -582,6 +575,39 @@ function shake(delay = 0) {
   }, delay);
 }
 
+// Диско-пол: клетки мигают случайными цветами, в конце вся доска вспыхивает цветом события.
+const DISCO = ['#ff4fd8', '#29ffe0', '#ffe94d', '#8f5bff', '#ff3b5c', '#3fa9ff', '#a7f070', '#ff9d3b'];
+let discoTimer = null;
+function disco(color) {
+  const { W, H } = game.state;
+  let layer = $('#disco');
+  if (!layer) {
+    layer = h('div', 'disco');
+    layer.id = 'disco';
+    wrapEl.insertBefore(layer, $('#pieces'));
+  }
+  clearInterval(discoTimer);
+  layer.style.gridTemplateColumns = `repeat(${W}, 1fr)`;
+  layer.style.gridTemplateRows = `repeat(${H}, 1fr)`;
+  layer.innerHTML = '<i></i>'.repeat(W * H);
+  const tiles = [...layer.children];
+  const palette = [...DISCO, color, color, color];
+  layer.classList.add('on');
+  let tick = 0;
+  sound.disco();
+  discoTimer = setInterval(() => {
+    tick++;
+    if (tick < 14) {
+      for (const t of tiles) t.style.background = Math.random() < 0.18 ? 'transparent' : palette[Math.floor(Math.random() * palette.length)];
+    } else if (tick < 18) {
+      for (const t of tiles) t.style.background = tick % 2 ? color : 'transparent';
+    } else {
+      clearInterval(discoTimer);
+      layer.classList.remove('on');
+    }
+  }, 110);
+}
+
 const bannerQueue = [];
 let bannerBusy = false;
 function banner(b) {
@@ -594,7 +620,7 @@ function nextBanner() {
   if (!b) { bannerBusy = false; return; }
   bannerBusy = true;
   el.style.setProperty('--c', b.color || '#ffcd75');
-  el.innerHTML = `${b.icon ? `<div class="b-icon" style="${bg(iconSprite(b.icon, b.color))}"></div>` : ''}<div class="b-title">${b.title}</div>${b.text ? `<div class="b-text">${b.text}</div>` : ''}`;
+  el.innerHTML = `<div class="b-title">${b.title}</div>${b.text ? `<div class="b-text">${b.text}</div>` : ''}`;
   el.classList.remove('show');
   void el.offsetWidth;
   el.classList.add('show');
@@ -614,13 +640,14 @@ function playFx(fx) {
         break;
       case 'trigger': {
         const C = CELLS[f.type];
+        disco(C.color);
         fxAt(f.sq, 'flash', { color: C.color, life: 750 });
         sparks(f.sq, C.color);
         fxAt(f.sq, 'label', { text: C.name.toUpperCase() + '!', color: C.color, delay: 100 });
         const text = f.type === 'meteor' ? `Цели на половине ${GEN[opp(f.by)].toLowerCase()} — удар через 2 хода`
           : f.type === 'fog' ? `${NAME[opp(f.by)]} ослеплены на 3 хода` : 'Дальнобойные фигуры бьют лишь на 3 клетки';
-        banner({ icon: f.type, title: TRIGGER_TITLE[f.type], text, color: C.color, time: 2200 });
-        sound.trigger(f.type);
+        setTimeout(() => banner({ title: TRIGGER_TITLE[f.type], text, color: C.color, time: 2200 }), 900);
+        setTimeout(() => sound.trigger(f.type), 1700);
         shake(0);
         break;
       }
@@ -636,9 +663,6 @@ function playFx(fx) {
       }
       case 'meteorBlocked':
         fxAt(f.sq, 'label', { text: 'КОРОЛЬ УСТОЯЛ', color: '#ffcd75', delay: 500 });
-        break;
-      case 'cellSpawn':
-        fxAt(f.sq, 'burst', { color: CELLS[f.type].color, life: 500, delay: 200 });
         break;
       case 'eventEnd':
         banner({ title: END_TITLE[f.type], color: '#a7f070', time: 1300 });
@@ -706,7 +730,7 @@ wrapEl.addEventListener('pointermove', (e) => {
   if (!drag || !drag.el) return;
   if (!drag.moved && Math.hypot(e.clientX - drag.x0, e.clientY - drag.y0) < 6) return;
   if (!drag.moved) { drag.moved = true; drag.el.classList.add('dragging'); }
-  const r = wrapEl.getBoundingClientRect(), size = r.width / game.state.N;
+  const r = wrapEl.getBoundingClientRect(), size = r.width / game.state.W;
   drag.el.style.transform = `translate(${e.clientX - r.left - size / 2}px, ${e.clientY - r.top - size / 2}px)`;
 });
 
@@ -805,18 +829,23 @@ openNewDialog();
 window.arena = {
   get game() { return game; },
   play(from, to, promo) {
-    const name = (sq) => FILES[sq % game.state.N] + (Math.floor(sq / game.state.N) + 1);
+    const name = (sq) => FILES[sq % game.state.W] + (Math.floor(sq / game.state.W) + 1);
     const m = game.status.moves.find((x) => name(x.from) === from && name(x.to) === to && (!promo || x.promo === promo));
     if (m) makeMove(m);
     return !!m;
   },
 };
 
-// Для скриншотов и отладки: index.html#moves=b2b4,c9c8,b4b5 разыгрывает ходы без диалога.
-if (location.hash.startsWith('#moves=')) {
-  dlgNew.close();
-  for (const mv of location.hash.slice(7).split(',')) {
-    const [, from, to, promo] = mv.match(/^([a-j]\d+)([a-j]\d+)([qrbn])?$/) || [];
+// Для скриншотов и отладки: index.html#cells=c5:meteor;moves=c2c4,d9d8,c4c5
+if (location.hash.length > 1) {
+  const params = Object.fromEntries(location.hash.slice(1).split(';').map((x) => x.split('=')));
+  if (params.cells || params.moves) dlgNew.close();
+  if (params.cells) {
+    const at = (name) => (+name.slice(1) - 1) * game.state.W + FILES.indexOf(name[0]);
+    game.state.cells = Object.fromEntries(params.cells.split(',').map((x) => x.split(':')).map(([sq, type]) => [at(sq), { type }]));
+  }
+  for (const mv of (params.moves || '').split(',')) {
+    const [, from, to, promo] = mv.match(/^([a-l]\d+)([a-l]\d+)([qrbn])?$/) || [];
     if (from) window.arena.play(from, to, promo);
   }
 }

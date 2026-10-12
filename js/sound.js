@@ -77,6 +77,14 @@ export const sound = {
     else if (type === 'fog') { noise(0.6, { gain: 0.1, freq: 900 }); arp([392, 349, 330], 0.12, { type: 'triangle', gain: 0.07 }); }
     else { arp([784, 622, 523, 392, 311], 0.08, { type: 'triangle', gain: 0.07 }); }
   },
+  disco() {
+    // «дискотечный» бит: бочка + арпеджио
+    for (let i = 0; i < 8; i++) {
+      tone(i % 2 ? 98 : 65, 0.08, { gain: 0.09, slide: -30, delay: i * 0.22 });
+      noise(0.03, { gain: 0.05, freq: 6000, delay: i * 0.22 + 0.11 });
+    }
+    arp([523, 659, 784, 988, 784, 659, 523, 659, 784, 988, 1175, 988], 0.11, { gain: 0.035 });
+  },
   boom() { noise(0.45, { gain: 0.3, freq: 900 }); tone(110, 0.3, { gain: 0.08, slide: -70 }); },
   end(win) {
     if (win) arp([523, 659, 784, 1046, 784, 1046], 0.1, { gain: 0.05 });

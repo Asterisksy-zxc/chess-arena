@@ -7,6 +7,7 @@ export const FILES = 'abcdefghijkl';
 export const VALUES = { p: 100, n: 320, b: 330, r: 500, q: 900, k: 0 };
 export const LETTER = { k: 'Кр', q: 'Ф', r: 'Л', b: 'С', n: 'К', p: '' };
 
+// Клетки событий спрятаны: их не видно, пока на них не встанет фигура.
 export const CELLS = {
   meteor: { color: '#ff3b5c', name: 'Метеориты', desc: 'На половину соперника падают метеориты: через 2 хода они уничтожат фигуры на отмеченных клетках и оставят кратеры.' },
   fog:    { color: '#3fa9ff', name: 'Туман',     desc: 'Соперник ослеплён на 3 своих хода: он видит только клетки рядом со своими фигурами.' },
@@ -28,9 +29,9 @@ const KING = [...ORTH, ...DIAG];
 const KNIGHT = [[1, 2], [2, 1], [2, -1], [1, -2], [-1, -2], [-2, -1], [-2, 1], [-1, 2]];
 
 export const opp = (c) => (c === 'w' ? 'b' : 'w');
-export const sqName = (s, sq) => FILES[sq % s.N] + (Math.floor(sq / s.N) + 1);
-const rowOf = (s, sq) => Math.floor(sq / s.N);
-const mirror = (s, sq) => s.N * s.N - 1 - sq; // центральная симметрия
+export const sqName = (s, sq) => FILES[sq % s.W] + (Math.floor(sq / s.W) + 1);
+const rowOf = (s, sq) => Math.floor(sq / s.W);
+const mirror = (s, sq) => s.W * s.H - 1 - sq; // центральная симметрия
 
 // Детерминированный генератор: одинаковые (зерно, ход, клетка) — одинаковый результат.
 function rngFor(seed, a, b = 0) {
@@ -55,35 +56,49 @@ function shuffle(arr, rng) {
 // ---------------------------------------------------------------- создание
 
 export function createGame(mode = 'arena', seed = 1) {
-  const N = mode === 'arena' ? 10 : 8;
-  const off = mode === 'arena' ? 1 : 0;
-  const board = new Array(N * N).fill(null);
+  const W = mode === 'arena' ? 12 : 8, H = mode === 'arena' ? 10 : 8;
+  const off = (W - 8) / 2;
+  const board = new Array(W * H).fill(null);
   const back = ['r', 'n', 'b', 'q', 'k', 'b', 'n', 'r'];
   let id = 0;
   for (let i = 0; i < 8; i++) {
     board[off + i] = { t: back[i], c: 'w', id: id++ };
-    board[N + off + i] = { t: 'p', c: 'w', id: id++ };
-    board[(N - 2) * N + off + i] = { t: 'p', c: 'b', id: id++ };
-    board[(N - 1) * N + off + i] = { t: back[i], c: 'b', id: id++ };
+    board[W + off + i] = { t: 'p', c: 'w', id: id++ };
+    board[(H - 2) * W + off + i] = { t: 'p', c: 'b', id: id++ };
+    board[(H - 1) * W + off + i] = { t: back[i], c: 'b', id: id++ };
   }
   const s = {
-    N, mode, board, seed: seed >>> 0, turn: 'w',
+    W, H, mode, board, seed: seed >>> 0, turn: 'w',
     castle: { wK: true, wQ: true, bK: true, bQ: true },
     kingFile: off + 4, rookFiles: [off, off + 7],
     ep: -1, ply: 0, halfmove: 0, fullmove: 1,
     cells: {}, craters: {}, event: null, night: false, fog: null,
     nextSpawnPly: 0, lost: { w: [], b: [] }, fx: [],
   };
-  if (mode === 'arena') {
-    const place = (r, c, type) => {
-      s.cells[r * N + c] = { type };
-      s.cells[mirror(s, r * N + c)] = { type };
-    };
-    place(4, 1, 'meteor'); // b5 / i6
-    place(4, 4, 'night');  // e5 / f6
-    place(4, 6, 'fog');    // g5 / d6
-  }
+  if (mode === 'arena') placeHiddenCells(s);
   return s;
+}
+
+// Невидимые клетки событий: случайные места (симметричными парами, чтобы шансы были равны),
+// но не там, куда пешки могут шагнуть первым же ходом.
+function placeHiddenCells(s) {
+  const rng = rngFor(s.seed, 0, 777);
+  const { W, H } = s;
+  const pawnReach = (sq) => {
+    const r = rowOf(s, sq), c = sq % W;
+    const pawnFile = c >= s.rookFiles[0] && c <= s.rookFiles[1];
+    return pawnFile && (r === 2 || r === 3 || r === H - 3 || r === H - 4);
+  };
+  const pool = [];
+  for (let sq = 0; sq < W * H; sq++) {
+    const r = rowOf(s, sq);
+    if (r >= 2 && r <= H - 3 && sq < mirror(s, sq) && !pawnReach(sq)) pool.push(sq);
+  }
+  const types = shuffle(Object.keys(CELLS), rng);
+  shuffle(pool, rng).slice(0, types.length).forEach((sq, i) => {
+    s.cells[sq] = { type: types[i] };
+    s.cells[mirror(s, sq)] = { type: types[i] };
+  });
 }
 
 function cloneState(s) {
@@ -101,36 +116,36 @@ function cloneState(s) {
 // ---------------------------------------------------------------- атаки
 
 export function isAttacked(s, sq, by) {
-  const N = s.N, b = s.board;
-  const r = Math.floor(sq / N), c = sq % N;
+  const W = s.W, H = s.H, b = s.board;
+  const r = Math.floor(sq / W), c = sq % W;
   const pr = by === 'w' ? r - 1 : r + 1;
-  if (pr >= 0 && pr < N) {
+  if (pr >= 0 && pr < H) {
     for (const dc of [-1, 1]) {
       const pc = c + dc;
-      if (pc < 0 || pc >= N) continue;
-      const p = b[pr * N + pc];
+      if (pc < 0 || pc >= W) continue;
+      const p = b[pr * W + pc];
       if (p && p.c === by && p.t === 'p') return true;
     }
   }
   for (const [dr, dc] of KNIGHT) {
     const rr = r + dr, cc = c + dc;
-    if (rr < 0 || rr >= N || cc < 0 || cc >= N) continue;
-    const p = b[rr * N + cc];
+    if (rr < 0 || rr >= H || cc < 0 || cc >= W) continue;
+    const p = b[rr * W + cc];
     if (p && p.c === by && p.t === 'n') return true;
   }
   for (const [dr, dc] of KING) {
     const rr = r + dr, cc = c + dc;
-    if (rr < 0 || rr >= N || cc < 0 || cc >= N) continue;
-    const p = b[rr * N + cc];
+    if (rr < 0 || rr >= H || cc < 0 || cc >= W) continue;
+    const p = b[rr * W + cc];
     if (p && p.c === by && p.t === 'k') return true;
   }
-  const range = s.night ? 3 : N;
+  const range = s.night ? 3 : W;
   for (let i = 0; i < 8; i++) {
     const [dr, dc] = KING[i];
     const diag = i >= 4;
     let rr = r + dr, cc = c + dc, d = 1;
-    while (rr >= 0 && rr < N && cc >= 0 && cc < N && d <= range) {
-      const q = rr * N + cc;
+    while (rr >= 0 && rr < H && cc >= 0 && cc < W && d <= range) {
+      const q = rr * W + cc;
       if (s.craters[q] !== undefined) break;
       const p = b[q];
       if (p) {
@@ -158,9 +173,9 @@ export function inCheck(s, color) {
 
 // Бьёт ли фигура с клетки from клетку to.
 export function pieceAttacks(s, from, to) {
-  const N = s.N, p = s.board[from];
+  const W = s.W, p = s.board[from];
   if (!p) return false;
-  const dr = Math.floor(to / N) - Math.floor(from / N), dc = (to % N) - (from % N);
+  const dr = Math.floor(to / W) - Math.floor(from / W), dc = (to % W) - (from % W);
   const adr = Math.abs(dr), adc = Math.abs(dc);
   switch (p.t) {
     case 'p': return adc === 1 && dr === (p.c === 'w' ? 1 : -1);
@@ -173,7 +188,7 @@ export function pieceAttacks(s, from, to) {
   if (dist === 0 || (s.night && dist > 3)) return false;
   const sr = Math.sign(dr), sc = Math.sign(dc);
   for (let i = 1; i < dist; i++) {
-    const q = from + (sr * i) * N + sc * i;
+    const q = from + (sr * i) * W + sc * i;
     if (s.board[q] || s.craters[q] !== undefined) return false;
   }
   return true;
@@ -203,38 +218,38 @@ export function pseudoMoves(s, color = s.turn) {
 }
 
 function genPiece(s, from, out) {
-  const N = s.N, b = s.board, p = b[from];
-  const r = Math.floor(from / N), c = from % N;
+  const W = s.W, H = s.H, b = s.board, p = b[from];
+  const r = Math.floor(from / W), c = from % W;
   const enemy = opp(p.c);
   const canCapture = (t) => t.c === enemy && t.t !== 'k';
 
   if (p.t === 'p') {
     const dir = p.c === 'w' ? 1 : -1;
-    const start = p.c === 'w' ? 1 : N - 2;
-    const last = p.c === 'w' ? N - 1 : 0;
+    const start = p.c === 'w' ? 1 : H - 2;
+    const last = p.c === 'w' ? H - 1 : 0;
     const r1 = r + dir;
-    if (r1 < 0 || r1 >= N) return;
+    if (r1 < 0 || r1 >= H) return;
     const push = (to, extra) => {
       if (r1 === last) for (const pr of ['q', 'r', 'b', 'n']) out.push({ from, to, promo: pr, ...extra });
       else out.push({ from, to, ...extra });
     };
-    const f1 = r1 * N + c;
+    const f1 = r1 * W + c;
     if (!b[f1] && s.craters[f1] === undefined) {
       push(f1, {});
       if (r === start) {
-        const f2 = (r + 2 * dir) * N + c;
+        const f2 = (r + 2 * dir) * W + c;
         if (!b[f2] && s.craters[f2] === undefined) out.push({ from, to: f2, double: true });
       }
     }
     for (const dc of [-1, 1]) {
       const c1 = c + dc;
-      if (c1 < 0 || c1 >= N) continue;
-      const to = r1 * N + c1;
+      if (c1 < 0 || c1 >= W) continue;
+      const to = r1 * W + c1;
       const t = b[to];
       if (t) {
         if (canCapture(t)) push(to, { capture: true });
       } else if (to === s.ep) {
-        const v = b[r * N + c1];
+        const v = b[r * W + c1];
         if (v && v.t === 'p' && v.c === enemy) out.push({ from, to, ep: true, capture: true });
       }
     }
@@ -244,8 +259,8 @@ function genPiece(s, from, out) {
   if (p.t === 'n' || p.t === 'k') {
     for (const [dr, dc] of p.t === 'n' ? KNIGHT : KING) {
       const rr = r + dr, cc = c + dc;
-      if (rr < 0 || rr >= N || cc < 0 || cc >= N) continue;
-      const to = rr * N + cc;
+      if (rr < 0 || rr >= H || cc < 0 || cc >= W) continue;
+      const to = rr * W + cc;
       if (s.craters[to] !== undefined) continue;
       const t = b[to];
       if (!t) out.push({ from, to });
@@ -256,11 +271,11 @@ function genPiece(s, from, out) {
   }
 
   const dirs = p.t === 'r' ? ORTH : p.t === 'b' ? DIAG : KING;
-  const range = s.night ? 3 : N;
+  const range = s.night ? 3 : W;
   for (const [dr, dc] of dirs) {
     let rr = r + dr, cc = c + dc, d = 1;
-    while (rr >= 0 && rr < N && cc >= 0 && cc < N && d <= range) {
-      const to = rr * N + cc;
+    while (rr >= 0 && rr < H && cc >= 0 && cc < W && d <= range) {
+      const to = rr * W + cc;
       if (s.craters[to] !== undefined) break;
       const t = b[to];
       if (!t) out.push({ from, to });
@@ -274,26 +289,26 @@ function genPiece(s, from, out) {
 }
 
 function genCastle(s, from, color, out) {
-  const N = s.N, home = color === 'w' ? 0 : N - 1, kf = s.kingFile;
-  if (from !== home * N + kf) return;
+  const W = s.W, home = color === 'w' ? 0 : s.H - 1, kf = s.kingFile;
+  if (from !== home * W + kf) return;
   const enemy = opp(color);
   let attackedNow = null;
   for (const [side, rf, dir] of [['K', s.rookFiles[1], 1], ['Q', s.rookFiles[0], -1]]) {
     if (!s.castle[color + side]) continue;
-    const rookSq = home * N + rf;
+    const rookSq = home * W + rf;
     const rook = s.board[rookSq];
     if (!rook || rook.t !== 'r' || rook.c !== color) continue;
     let clear = true;
     for (let f = Math.min(kf, rf) + 1; f < Math.max(kf, rf); f++) {
-      const q = home * N + f;
+      const q = home * W + f;
       if (s.board[q] || s.craters[q] !== undefined) { clear = false; break; }
     }
     if (!clear) continue;
     if (attackedNow === null) attackedNow = isAttacked(s, from, enemy);
     if (attackedNow) return;
-    if (isAttacked(s, home * N + kf + dir, enemy)) continue;
+    if (isAttacked(s, home * W + kf + dir, enemy)) continue;
     // клетку прибытия короля проверяет общий фильтр легальности
-    out.push({ from, to: home * N + kf + 2 * dir, castle: side, rookFrom: rookSq, rookTo: home * N + kf + dir });
+    out.push({ from, to: home * W + kf + 2 * dir, castle: side, rookFrom: rookSq, rookTo: home * W + kf + dir });
   }
 }
 
@@ -301,10 +316,10 @@ function genCastle(s, from, color, out) {
 
 export function applyMove(s, m) {
   const n = cloneState(s);
-  const N = n.N;
+  const W = n.W;
   const piece = n.board[m.from];
   const mover = piece.c;
-  const capSq = m.ep ? rowOf(n, m.from) * N + (m.to % N) : m.to;
+  const capSq = m.ep ? rowOf(n, m.from) * W + (m.to % W) : m.to;
   const captured = n.board[capSq];
   if (captured) n.board[capSq] = null;
   n.board[m.from] = null;
@@ -328,10 +343,10 @@ export function applyMove(s, m) {
 }
 
 function touchCastle(n, sq) {
-  const N = n.N;
-  for (const [color, home] of [['w', 0], ['b', N - 1]]) {
-    if (sq === home * N + n.rookFiles[0]) n.castle[color + 'Q'] = false;
-    if (sq === home * N + n.rookFiles[1]) n.castle[color + 'K'] = false;
+  const W = n.W;
+  for (const [color, home] of [['w', 0], ['b', n.H - 1]]) {
+    if (sq === home * W + n.rookFiles[0]) n.castle[color + 'Q'] = false;
+    if (sq === home * W + n.rookFiles[1]) n.castle[color + 'K'] = false;
   }
 }
 
@@ -354,14 +369,14 @@ function triggerCell(n, sq, by) {
 }
 
 function pickMeteorTargets(n, by, rng) {
-  const N = n.N, enemy = opp(by);
+  const H = n.H, enemy = opp(by);
   // половина соперника без его последней горизонтали — оттуда фигуры часто некуда увести
   const half = (sq) => {
     const r = rowOf(n, sq);
-    return by === 'w' ? r >= N / 2 && r < N - 1 : r < N / 2 && r > 0;
+    return by === 'w' ? r >= H / 2 && r < H - 1 : r < H / 2 && r > 0;
   };
   const ok = [];
-  for (let sq = 0; sq < N * N; sq++) {
+  for (let sq = 0; sq < n.W * H; sq++) {
     const p = n.board[sq];
     if (half(sq) && !(p && p.t === 'k') && n.craters[sq] === undefined && !n.cells[sq]) ok.push(sq);
   }
@@ -424,9 +439,9 @@ function spawnPair(n) {
   const rng = rngFor(n.seed, n.ply, 4242);
   const free = (sq) => !n.board[sq] && !n.cells[sq] && n.craters[sq] === undefined;
   const pool = [];
-  for (let sq = 0; sq < n.N * n.N; sq++) {
+  for (let sq = 0; sq < n.W * n.H; sq++) {
     const r = rowOf(n, sq);
-    if (r >= 3 && r <= n.N - 4 && sq < mirror(n, sq) && free(sq) && free(mirror(n, sq))) pool.push(sq);
+    if (r >= 2 && r <= n.H - 3 && sq < mirror(n, sq) && free(sq) && free(mirror(n, sq))) pool.push(sq);
   }
   if (!pool.length) return;
   const sq = pool[Math.floor(rng() * pool.length)];
@@ -484,18 +499,18 @@ export function gameStatus(s, repetitions = 1) {
 
 export function moveToSan(s, m, legal) {
   if (m.castle) return m.castle === 'K' ? '0-0' : '0-0-0';
-  const N = s.N, p = s.board[m.from];
+  const W = s.W, p = s.board[m.from];
   const dest = sqName(s, m.to);
   const cap = m.capture || m.ep;
   if (p.t === 'p') {
-    return (cap ? FILES[m.from % N] + 'x' : '') + dest + (m.promo ? '=' + LETTER[m.promo] : '');
+    return (cap ? FILES[m.from % W] + 'x' : '') + dest + (m.promo ? '=' + LETTER[m.promo] : '');
   }
   const others = legal.filter((o) => o.to === m.to && o.from !== m.from && s.board[o.from].t === p.t);
   let dis = '';
   if (others.length) {
-    const sameFile = others.some((o) => o.from % N === m.from % N);
+    const sameFile = others.some((o) => o.from % W === m.from % W);
     const sameRank = others.some((o) => rowOf(s, o.from) === rowOf(s, m.from));
-    if (!sameFile) dis = FILES[m.from % N];
+    if (!sameFile) dis = FILES[m.from % W];
     else if (!sameRank) dis = String(rowOf(s, m.from) + 1);
     else dis = sqName(s, m.from);
   }
