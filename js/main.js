@@ -18,6 +18,13 @@ const save = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } cat
 
 const NAME = { w: 'БЕЛЫЕ', b: 'ЧЁРНЫЕ' };
 const GEN = { w: 'БЕЛЫХ', b: 'ЧЁРНЫХ' };
+const PIECE = { p: 'пешка', n: 'конь', b: 'слон', r: 'ладья', q: 'ферзь', k: 'король' };
+const cap = (t) => t[0].toUpperCase() + t.slice(1).toLowerCase();
+const plural = (n, [one, few, many]) => {
+  const d = n % 10, dd = n % 100;
+  return n + ' ' + (d === 1 && dd !== 11 ? one : d >= 2 && d <= 4 && (dd < 12 || dd > 14) ? few : many);
+};
+const MOVES = ['ход', 'хода', 'ходов'];
 const NEON = ['#ff2e88', '#29f0ff', '#ffe14d', '#9b5cff', '#39ff14', '#ff7a1a', '#00a2ff', '#ff2bd6'];
 
 const settings = { mode: 'arena', opponent: 'human', level: '2', color: 'w', timer: '0', ...load('arena.settings') };
@@ -159,11 +166,16 @@ function makeMove(m) {
     if (n.fx.some((f) => f.kind === 'mirror')) {
       game.lastMove = { from: mirrorFile(n, m.from), to: mirrorFile(n, m.to) };
     }
+    // портал переносит фигуру мгновенно, без скольжения через всю доску
+    const portal = n.fx.find((f) => f.kind === 'portal');
+    const jumper = portal && pieceEls.get(n.board[portal.to].id);
+    if (jumper) jumper.style.transition = 'none';
     game.state = n;
     game.status = status;
     if (status.check) setTimeout(() => sound.check(), 120);
     if (status.over) finish(status);
     render(n.fx);
+    if (jumper) requestAnimationFrame(() => requestAnimationFrame(() => { jumper.style.transition = ''; }));
     playFx(n.fx);
     if (!game.over) maybeBot();
   };
@@ -193,7 +205,7 @@ function maybeBot() {
   renderTurn();
   renderPlates();
   // бот не знает, где спрятаны клетки
-  askBot({ ...s, cells: {} }, +settings.level).then((mv) => {
+  askBot({ ...s, cells: {}, noCells: true }, +settings.level).then((mv) => {
     if (token !== aiToken) return;
     const wait = Math.max(0, 550 - (performance.now() - t0));
     setTimeout(() => {
@@ -341,7 +353,7 @@ function renderPieces() {
     const sprite = p.t + p.c;
     if (e._sprite !== sprite) { e.style.backgroundImage = pieceSprite(p.t, p.c); e._sprite = sprite; }
     const dragging = drag && drag.id === p.id && drag.moved;
-    e.className = dragging ? 'pc dragging' : 'pc';
+    e.className = 'pc' + (dragging ? ' dragging' : '') + (p.frozen ? ' frozen' : '');
     if (!dragging && e.style.transform !== pos) e.style.transform = pos;
   }
   for (const [id, e] of pieceEls) {
@@ -365,7 +377,9 @@ function renderTurn() {
     sub = `Ход ${s.fullmove}`;
   }
   let alerts = '';
-  if (!game.over && game.status.check) alerts = '<div class="alert check">ШАХ! КОРОЛЬ ПОД УДАРОМ</div>';
+  const le = s.lastEvent;
+  if (!game.over && le && le.type === 'turbo' && le.ply === s.ply && !animLock) alerts += '<div class="alert turbo">ТУРБО: ЕЩЁ ОДИН ХОД!</div>';
+  if (!game.over && game.status.check) alerts += '<div class="alert check">ШАХ! КОРОЛЬ ПОД УДАРОМ</div>';
   if (game.over) {
     const info = resultInfo(game.over);
     alerts = `<div class="alert ${info.win ? 'win' : 'draw'}">${info.text}</div>`;
@@ -383,19 +397,32 @@ function renderEvent() {
   const s = game.state, panel = $('#eventPanel');
   panel.hidden = s.mode !== 'arena';
   if (panel.hidden) return;
-  const ev = s.event;
-  let html = '<div class="panel-title">СОБЫТИЕ</div>';
+  let html = '<div class="panel-title">СОБЫТИЯ</div>';
   if (animLock) {
     html += '<div class="ev-idle"><b class="disco-text">ДИСКО!</b>Клетка найдена — пол сходит с ума…</div>';
-  } else if (!ev) {
-    const hidden = Object.keys(s.cells).length;
-    html += `<div class="ev-idle"><b>ЗАТИШЬЕ</b>На поле спрятано клеток: <span class="hidden-count">${hidden}</span>. Наступите на такую — по полу пройдёт диско-волна, и начнётся событие.</div>`;
   } else {
-    const C = CELLS[ev.type];
-    const left = Math.ceil((ev.endPly - s.ply) / 2), total = ARENA.lavaLength / 2;
-    html += `<div class="ev-row"><div class="ev-swatch" style="--c:${C.color}"></div><div><div class="ev-name" style="color:${C.color}">${C.name.toUpperCase()}</div><div class="ev-text">Нашли ${NAME[ev.by].toLowerCase()}. По лаве нельзя ходить и сквозь неё нельзя бить. Остынет через ${left}.</div></div></div>${meter(left, total, C.color)}`;
+    const rows = [];
+    const ev = s.event;
+    if (ev) {
+      const C = CELLS.lava, left = Math.ceil((ev.endPly - s.ply) / 2);
+      rows.push(evRow(C, `Нашли ${NAME[ev.by].toLowerCase()}. По лаве нельзя ходить и бить сквозь неё. Остынет через ${plural(left, MOVES)}.`) + meter(left, ARENA.lavaLength / 2, C.color));
+    }
+    const ice = s.board.filter((p) => p && p.frozen);
+    if (ice.length) {
+      const C = CELLS.freeze, left = Math.ceil((Math.min(...ice.map((p) => p.frozen)) - s.ply) / 2);
+      rows.push(evRow(C, `Во льду фигур ${GEN[ice[0].c].toLowerCase()}: ${ice.length}. Оттают через ${plural(left, MOVES)}.`) + meter(left, ARENA.freezeLength / 2, C.color));
+    }
+    const le = s.lastEvent;
+    if (!rows.length && le) rows.push(evRow(CELLS[le.type], `Последняя находка — ${NAME[le.by].toLowerCase()}. ${CELLS[le.type].desc}`));
+    if (!rows.length) rows.push('<div class="ev-idle"><b>ЗАТИШЬЕ</b>Наступите на скрытую клетку — по полу пройдёт диско-волна, и начнётся событие.</div>');
+    html += rows.join('');
   }
+  html += `<div class="ev-hidden">Спрятано клеток: <span class="hidden-count">${Object.keys(s.cells).length}</span></div>`;
   panel.innerHTML = html;
+}
+
+function evRow(C, text) {
+  return `<div class="ev-row"><div class="ev-swatch" style="--c:${C.color}"></div><div><div class="ev-name" style="color:${C.color}">${C.name.toUpperCase()}</div><div class="ev-text">${text}</div></div></div>`;
 }
 
 function material(s, color) {
@@ -514,9 +541,9 @@ function discoWave(origin, color) {
     }
   }
   const maxDist = Math.max(...tiles.map((x) => x.dist));
-  const STEP = 70, WAVES = 3, GAP = 260, GLOW = 230;
+  const STEP = 58, WAVES = 3, GAP = 230, GLOW = 210;
   const wavesEnd = (WAVES - 1) * GAP + maxDist * STEP + GLOW;
-  const total = wavesEnd + 520;
+  const total = wavesEnd + 390;
   layer.classList.add('on');
   sound.disco();
   const t0 = performance.now();
@@ -617,12 +644,40 @@ function playFx(fx) {
         sparks(f.sq, C.color);
         shake(0);
         sound.trigger(f.type);
-        if (f.type === 'lava') banner({ title: 'ПОЛ — ЭТО ЛАВА!', text: 'На 3 хода по лаве нельзя ходить и сквозь неё нельзя бить', color: C.color, time: 2200 });
-        else banner({ title: 'ЗЕРКАЛО!', text: 'Доска отразилась: фланги поменялись местами, рокировки больше нет', color: C.color, time: 2200 });
+        const [title, text] = triggerText(f, fx);
+        banner({ title, text, color: C.color, time: 2000 });
         break;
       }
       case 'lava':
-        f.squares.forEach((sq, i) => fxAt(sq, 'burst', { color: '#ff5a00', delay: (i % 8) * 40, life: 500 }));
+        f.squares.forEach((sq, i) => fxAt(sq, 'burst', { color: CELLS.lava.color, delay: (i % 8) * 40, life: 500 }));
+        break;
+      case 'freeze':
+        f.squares.forEach((sq, i) => {
+          fxAt(sq, 'burst', { color: CELLS.freeze.color, delay: i * 120, life: 600 });
+          sparks(sq, CELLS.freeze.color, i * 120);
+        });
+        break;
+      case 'thaw':
+        f.squares.forEach((sq) => fxAt(sq, 'burst', { color: '#ffffff', life: 500 }));
+        banner({ title: 'ЛЁД РАСТАЯЛ', color: CELLS.freeze.color, time: 1100 });
+        break;
+      case 'upgrade':
+        sparks(f.sq, CELLS.upgrade.color, 150);
+        fxAt(f.sq, 'label', { text: PIECE[f.to].toUpperCase() + '!', color: CELLS.upgrade.color, delay: 150 });
+        flashPiece(f.sq, CELLS.upgrade.color);
+        break;
+      case 'reinforce':
+        f.squares.forEach((sq, i) => {
+          fxAt(sq, 'burst', { color: CELLS.reinforce.color, delay: i * 160, life: 600 });
+          sparks(sq, CELLS.reinforce.color, i * 160);
+          flashPiece(sq, CELLS.reinforce.color, i * 160);
+        });
+        break;
+      case 'portal':
+        fxAt(f.from, 'flash', { color: CELLS.portal.color, life: 750 });
+        fxAt(f.to, 'burst', { color: CELLS.portal.color, life: 600 });
+        sparks(f.to, CELLS.portal.color, 100);
+        flashPiece(f.to, CELLS.portal.color);
         break;
       case 'eventEnd':
         banner({ title: 'ЛАВА ОСТЫЛА', color: '#39ff14', time: 1300 });
@@ -630,6 +685,39 @@ function playFx(fx) {
         break;
     }
   }
+}
+
+function triggerText(f, fx) {
+  switch (f.type) {
+    case 'lava': return ['ПОЛ — ЭТО ЛАВА!', 'На 3 хода по лаве нельзя ходить и сквозь неё нельзя бить'];
+    case 'mirror': return ['ЗЕРКАЛО!', 'Доска отразилась: фланги поменялись местами, рокировки больше нет'];
+    case 'freeze': {
+      const k = fx.find((x) => x.kind === 'freeze')?.squares.length || 0;
+      return ['ЗАМОРОЗКА!', `Фигуры ${GEN[opp(f.by)].toLowerCase()} во льду: ${k}. Не ходят 2 хода`];
+    }
+    case 'turbo': return ['ТУРБО!', `${cap(NAME[f.by])} ходят ещё раз подряд`];
+    case 'upgrade': {
+      const u = fx.find((x) => x.kind === 'upgrade');
+      return ['ПРОКАЧКА!', u ? `${cap(PIECE[u.from])} → ${PIECE[u.to]}` : ''];
+    }
+    case 'reinforce': return ['ПОДКРЕПЛЕНИЕ!', `У ${GEN[f.by].toLowerCase()} из пола выросли новые пешки`];
+    case 'portal': return ['ПОРТАЛ!', 'Фигура телепортировалась в тыл врага'];
+  }
+  return [CELLS[f.type].name.toUpperCase(), ''];
+}
+
+// Пиксельная вспышка на самой фигуре (прокачка, портал, новые пешки).
+function flashPiece(sq, color, delay = 0) {
+  setTimeout(() => {
+    const p = game.state.board[sq];
+    const e = p && pieceEls.get(p.id);
+    if (!e || !e.animate) return;
+    e.animate([
+      { filter: `brightness(3) drop-shadow(0 0 0 ${color})` },
+      { filter: `brightness(2.2) drop-shadow(0 0 4px ${color})` },
+      { filter: 'none' },
+    ], { duration: 650, easing: 'steps(6)' });
+  }, delay);
 }
 
 // ---------------------------------------------------------------- ввод

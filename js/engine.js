@@ -9,17 +9,27 @@ export const LETTER = { k: 'Кр', q: 'Ф', r: 'Л', b: 'С', n: 'К', p: '' };
 
 // Клетки событий спрятаны: их не видно, пока на них не встанет фигура.
 export const CELLS = {
-  lava:   { color: '#ff5a00', name: 'Пол — это лава', short: 'Лава', desc: 'Четверть пустых клеток на 3 хода превращается в лаву: по ней нельзя ходить и сквозь неё нельзя бить.' },
-  mirror: { color: '#ff2bd6', name: 'Зеркало', short: 'Зеркало', desc: 'Вся доска отражается слева направо: фланги меняются местами, рокировка пропадает.' },
+  lava:      { color: '#ff5a00', name: 'Пол — это лава', short: 'Лава', desc: 'Четверть пустых клеток на 3 хода превращается в лаву: по ней нельзя ходить и сквозь неё нельзя бить.' },
+  mirror:    { color: '#ff2bd6', name: 'Зеркало', short: 'Зеркало', desc: 'Вся доска отражается слева направо: фланги меняются местами, рокировка пропадает.' },
+  freeze:    { color: '#29f0ff', name: 'Заморозка', short: 'Лёд', desc: 'Три фигуры соперника (кроме короля) вмерзают в лёд на 2 его хода: ходить не могут, но клетки держат.' },
+  turbo:     { color: '#39ff14', name: 'Турбо', short: 'Турбо', desc: 'Нашедший сразу ходит ещё раз. Если соперник под шахом, вместо этого — прокачка.' },
+  upgrade:   { color: '#ffe14d', name: 'Прокачка', short: 'Прокачка', desc: 'Фигура на клетке повышается: пешка → конь → слон → ладья → ферзь. Ферзь и король прокачивают соседа по армии.' },
+  reinforce: { color: '#ff2e63', name: 'Подкрепление', short: 'Пешки', desc: 'На вашей половине поля из пола вырастают две новые пешки.' },
+  portal:    { color: '#9b5cff', name: 'Портал', short: 'Портал', desc: 'Фигура телепортируется в случайную свободную клетку на половине соперника. Король в портал не пролезает.' },
 };
 
 export const ARENA = {
-  cellCount: 6,     // сколько скрытых клеток на старте
-  minCells: 3,      // если осталось меньше — прячутся новые
+  cellCount: 12,    // сколько скрытых клеток на старте
+  minCells: 9,      // если осталось меньше — прячутся новые
+  respawnCount: 3,
+  respawnDelay: 2,
   lavaShare: 0.25,  // доля пустых клеток, которые становятся лавой
   lavaLength: 6,    // сколько полуходов держится лава (по 3 хода каждому)
-  respawnDelay: 4,
+  freezeCount: 3,
+  freezeLength: 4,  // 2 хода соперника
 };
+
+const LADDER = { p: 'n', n: 'b', b: 'r', r: 'q' };
 
 const ORTH = [[1, 0], [-1, 0], [0, 1], [0, -1]];
 const DIAG = [[1, 1], [1, -1], [-1, 1], [-1, -1]];
@@ -69,21 +79,22 @@ export function createGame(mode = 'arena', seed = 1) {
     castle: { wK: true, wQ: true, bK: true, bQ: true },
     kingFile: 4, rookFiles: [0, 7],
     ep: -1, ply: 0, halfmove: 0, fullmove: 1,
-    cells: {}, lava: {}, event: null,
+    cells: {}, lava: {}, event: null, lastEvent: null, thawAt: 0, nextId: id,
     nextSpawnPly: 0, lost: { w: [], b: [] }, fx: [],
   };
   if (mode === 'arena') hideCells(s, ARENA.cellCount, rngFor(s.seed, 0, 777), true);
   return s;
 }
 
-// Прячет клетки в случайных местах середины поля, но не там, куда пешки
-// могут шагнуть первым же ходом. Типы: на старте хотя бы по одному каждого.
+// Прячет клетки в случайных местах середины поля. На старте — не там, куда пешки
+// могут шагнуть первым же ходом, и хотя бы по одной клетке каждого типа.
 function hideCells(s, count, rng, initial) {
   const { W, H } = s;
+  const pad = initial ? 4 : 3;
   const pool = [];
   for (let sq = 0; sq < W * H; sq++) {
     const r = rowOf(s, sq);
-    if (r < 4 || r > H - 5) continue;
+    if (r < pad || r > H - 1 - pad) continue;
     if (s.board[sq] || s.cells[sq] || s.lava[sq] !== undefined) continue;
     pool.push(sq);
   }
@@ -169,7 +180,7 @@ export function pseudoMoves(s, color = s.turn) {
   const out = [];
   for (let sq = 0; sq < s.board.length; sq++) {
     const p = s.board[sq];
-    if (p && p.c === color) genPiece(s, sq, out);
+    if (p && p.c === color && !p.frozen) genPiece(s, sq, out);
   }
   return out;
 }
@@ -254,7 +265,7 @@ function genCastle(s, from, color, out) {
     if (!s.castle[color + side]) continue;
     const rookSq = home * W + rf;
     const rook = s.board[rookSq];
-    if (!rook || rook.t !== 'r' || rook.c !== color) continue;
+    if (!rook || rook.t !== 'r' || rook.c !== color || rook.frozen) continue;
     let clear = true;
     for (let f = Math.min(kf, rf) + 1; f < Math.max(kf, rf); f++) {
       const q = home * W + f;
@@ -296,8 +307,8 @@ export function applyMove(s, m, noTrigger = false) {
   }
   n.halfmove = piece.t === 'p' || captured ? 0 : n.halfmove + 1;
   n.ep = m.double ? (m.from + m.to) / 2 : -1;
-  if (!noTrigger && n.mode === 'arena' && n.cells[m.to] && !n.event) triggerCell(n, m.to, mover);
   endTurn(n);
+  if (!noTrigger && n.mode === 'arena' && n.cells[m.to]) triggerCell(n, m.to, mover);
   return n;
 }
 
@@ -310,15 +321,34 @@ function touchCastle(n, sq) {
 }
 
 // Фигура встала на скрытую клетку: клетка вспыхивает, событие начинается.
-// Оба события не могут подставить короля того, кто наступил: лава только
-// перекрывает линии, а зеркало сохраняет все расстояния между фигурами.
+// Срабатывает сразу после хода, когда очередь уже у соперника.
+// Ни одно событие не подставляет короля того, кто наступил: лава и новые пешки
+// только перекрывают линии, зеркало сохраняет расстояния между фигурами,
+// лёд и прокачка никого не двигают, а портал выбирает только безопасные клетки.
 function triggerCell(n, sq, by) {
-  const type = n.cells[sq].type;
+  let type = n.cells[sq].type;
   delete n.cells[sq];
-  const p = n.ply;
+  const p = n.ply - 1; // полуход, которым наступили на клетку
+  const foe = opp(by);
+  const rng = rngFor(n.seed, p, sq);
+
+  // Если событие сейчас невозможно, клетка срабатывает как прокачка.
+  if (type === 'lava' && n.event) type = 'upgrade';
+  if (type === 'turbo' && (inCheck(n, foe) || !legalMoves({ ...n, turn: by, ep: -1 }).length)) type = 'upgrade';
+  let portalTo = -1;
+  if (type === 'portal') {
+    portalTo = portalTarget(n, sq, by, rng);
+    if (portalTo < 0) type = 'upgrade';
+  }
+  let upTo = -1;
+  if (type === 'upgrade') {
+    upTo = upgradeTarget(n, sq, by, rng);
+    if (upTo < 0) type = 'reinforce';
+  }
   n.fx.push({ kind: 'trigger', type, sq, by });
+  n.lastEvent = { type, by, sq, ply: n.ply };
+
   if (type === 'lava') {
-    const rng = rngFor(n.seed, p, sq);
     const empty = [];
     for (let q = 0; q < n.W * n.H; q++) if (!n.board[q] && n.lava[q] === undefined && !n.cells[q]) empty.push(q);
     const picked = shuffle(empty, rng).slice(0, Math.round(empty.length * ARENA.lavaShare));
@@ -334,9 +364,79 @@ function triggerCell(n, sq, by) {
     n.cells = Object.fromEntries(Object.entries(n.cells).map(([q, v]) => [flip(+q), v]));
     if (n.ep >= 0) n.ep = flip(n.ep);
     n.castle = { wK: false, wQ: false, bK: false, bQ: false };
-    n.nextSpawnPly = p + ARENA.respawnDelay;
     n.fx.push({ kind: 'mirror' });
+  } else if (type === 'freeze') {
+    const cands = [];
+    n.board.forEach((x, q) => { if (x && x.c === foe && x.t !== 'k' && !x.frozen) cands.push(q); });
+    const picked = shuffle(cands, rng).slice(0, ARENA.freezeCount);
+    const until = p + ARENA.freezeLength;
+    for (const q of picked) n.board[q] = { ...n.board[q], frozen: until };
+    // лёд сам по себе не ставит мат и пат: оттаиваем, пока у соперника не появится ход
+    while (picked.length && !legalMoves(n).length) unfreeze(n, picked.pop());
+    if (picked.length) n.thawAt = n.thawAt ? Math.min(n.thawAt, until) : until;
+    n.fx.push({ kind: 'freeze', squares: picked });
+  } else if (type === 'turbo') {
+    n.turn = by;
+    if (by === 'b') n.fullmove--;
+    n.ep = -1;
+    n.fx.push({ kind: 'turbo' });
+  } else if (type === 'upgrade') {
+    const x = n.board[upTo];
+    n.board[upTo] = { ...x, t: LADDER[x.t] };
+    n.fx.push({ kind: 'upgrade', sq: upTo, from: x.t, to: LADDER[x.t] });
+  } else if (type === 'reinforce') {
+    const half = n.H >> 1;
+    const [lo, hi] = by === 'w' ? [2, half - 1] : [half, n.H - 3];
+    const pool = freeSquares(n, lo, hi).filter((q) => q !== n.ep);
+    const picked = shuffle(pool, rng).slice(0, 2);
+    for (const q of picked) n.board[q] = { t: 'p', c: by, id: n.nextId++ };
+    n.fx.push({ kind: 'reinforce', squares: picked });
+  } else if (type === 'portal') {
+    n.board[portalTo] = n.board[sq];
+    n.board[sq] = null;
+    n.ep = -1;
+    n.fx.push({ kind: 'portal', from: sq, to: portalTo });
   }
+}
+
+function freeSquares(n, lo, hi) {
+  const out = [];
+  for (let q = lo * n.W; q < (hi + 1) * n.W; q++) {
+    if (!n.board[q] && !n.cells[q] && n.lava[q] === undefined) out.push(q);
+  }
+  return out;
+}
+
+function unfreeze(n, q) {
+  const { frozen, ...rest } = n.board[q];
+  n.board[q] = rest;
+}
+
+// Кого прокачать: саму фигуру, а если это ферзь или король — случайного соседа по армии.
+function upgradeTarget(n, sq, by, rng) {
+  if (LADDER[n.board[sq].t]) return sq;
+  const cands = [];
+  n.board.forEach((x, q) => { if (x && x.c === by && LADDER[x.t]) cands.push(q); });
+  return cands.length ? cands[Math.floor(rng() * cands.length)] : -1;
+}
+
+// Куда выкинет портал: свободная клетка на половине соперника, после прыжка
+// свой король не под шахом. Сначала ищем клетку, которую соперник не бьёт.
+function portalTarget(n, sq, by, rng) {
+  const piece = n.board[sq];
+  if (piece.t === 'k') return -1;
+  const half = n.H >> 1;
+  const [lo, hi] = by === 'w' ? [half, n.H - 2] : [1, half - 1];
+  const pool = shuffle(freeSquares(n, lo, hi), rng);
+  const tryJump = (q, quiet) => {
+    n.board[sq] = null;
+    n.board[q] = piece;
+    const ok = !inCheck(n, by) && (!quiet || !isAttacked(n, q, opp(by)));
+    n.board[q] = null;
+    n.board[sq] = piece;
+    return ok;
+  };
+  return pool.find((q) => tryJump(q, true)) ?? pool.find((q) => tryJump(q, false)) ?? -1;
 }
 
 function endTurn(n) {
@@ -346,21 +446,35 @@ function endTurn(n) {
   if (n.mode === 'arena') tickWorld(n);
 }
 
-// Изменения мира в начале хода: лава остывает, прячутся новые клетки.
+// Изменения мира в начале хода: лава остывает, лёд тает, прячутся новые клетки.
 function tickWorld(n) {
   for (const k of Object.keys(n.lava)) {
     if (n.lava[k] <= n.ply) delete n.lava[k];
   }
+  if (n.thawAt && n.ply >= n.thawAt) thaw(n);
   const ev = n.event;
   if (ev && n.ply >= ev.endPly) {
     n.fx.push({ kind: 'eventEnd', type: ev.type });
     n.event = null;
-    n.nextSpawnPly = n.ply + ARENA.respawnDelay;
   }
-  if (!n.event && n.ply >= n.nextSpawnPly && Object.keys(n.cells).length < ARENA.minCells) {
-    hideCells(n, 2, rngFor(n.seed, n.ply, 4242), false);
+  // noCells: позиция для бота — он не знает о клетках и не выдумывает новые
+  if (!n.noCells && n.ply >= n.nextSpawnPly && Object.keys(n.cells).length < ARENA.minCells) {
+    hideCells(n, ARENA.respawnCount, rngFor(n.seed, n.ply, 4242), false);
+    n.nextSpawnPly = n.ply + ARENA.respawnDelay;
     n.fx.push({ kind: 'cellsHidden' });
   }
+}
+
+function thaw(n) {
+  const thawed = [];
+  let next = 0;
+  n.board.forEach((x, q) => {
+    if (!x || !x.frozen) return;
+    if (x.frozen <= n.ply) { unfreeze(n, q); thawed.push(q); }
+    else next = next ? Math.min(next, x.frozen) : x.frozen;
+  });
+  n.thawAt = next;
+  if (thawed.length) n.fx.push({ kind: 'thaw', squares: thawed });
 }
 
 // ---------------------------------------------------------------- легальность и итог
@@ -381,7 +495,7 @@ export function insufficientMaterial(s) {
 
 export function positionKey(s) {
   let k = '';
-  for (const p of s.board) k += p ? (p.c === 'w' ? p.t.toUpperCase() : p.t) : '.';
+  for (const p of s.board) k += p ? (p.c === 'w' ? p.t.toUpperCase() : p.t) + (p.frozen ? '*' : '') : '.';
   k += s.turn + (s.castle.wK ? 'K' : '') + (s.castle.wQ ? 'Q' : '') + (s.castle.bK ? 'k' : '') + (s.castle.bQ ? 'q' : '');
   k += s.ep;
   if (s.mode === 'arena') {

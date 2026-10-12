@@ -73,8 +73,15 @@ export const sound = {
   check() { arp([988, 740, 988], 0.07, { gain: 0.045 }); },
   start() { arp([523, 659, 784, 1046], 0.07, { gain: 0.05 }); },
   trigger(type) {
-    if (type === 'lava') { noise(0.8, { gain: 0.2, freq: 500 }); arp([330, 262, 196, 147, 110], 0.09, { gain: 0.06 }); }
-    else { arp([392, 523, 659, 784, 1046, 784, 659, 523], 0.05, { type: 'triangle', gain: 0.07 }); }
+    switch (type) {
+      case 'lava': noise(0.8, { gain: 0.2, freq: 500 }); arp([330, 262, 196, 147, 110], 0.09, { gain: 0.06 }); break;
+      case 'mirror': arp([392, 523, 659, 784, 1046, 784, 659, 523], 0.05, { type: 'triangle', gain: 0.07 }); break;
+      case 'freeze': noise(0.25, { gain: 0.06, freq: 9000 }); arp([2093, 1760, 1568, 1319, 1047, 1319], 0.05, { type: 'triangle', gain: 0.06 }); break;
+      case 'turbo': arp([262, 330, 392, 523, 659, 784, 1046, 1319], 0.035, { gain: 0.05 }); tone(1319, 0.25, { gain: 0.04, slide: 400, delay: 0.3 }); break;
+      case 'upgrade': arp([392, 494, 587, 784, 988, 1175, 1568], 0.06, { gain: 0.05 }); break;
+      case 'reinforce': [0, 0.16, 0.32].forEach((d, i) => { tone(i === 2 ? 262 : 196, 0.12, { gain: 0.07, delay: d }); noise(0.05, { gain: 0.08, freq: 1500, delay: d }); }); break;
+      case 'portal': tone(180, 0.35, { type: 'triangle', gain: 0.08, slide: 1400 }); tone(1600, 0.3, { type: 'triangle', gain: 0.06, slide: -1400, delay: 0.35 }); break;
+    }
   },
   disco() {
     // «дискотечный» бит: бочка + арпеджио
