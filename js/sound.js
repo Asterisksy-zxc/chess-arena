@@ -1,5 +1,6 @@
 // Чиптюн-звуки на WebAudio: квадратная волна и шум, как у 8-битных приставок.
 let ctx = null;
+let out = null; // общий выход через компрессор, чтобы наложенные звуки не хрипели
 let muted = false;
 try { muted = localStorage.getItem('arena.muted') === '1'; } catch { /* приватный режим */ }
 
@@ -8,6 +9,15 @@ function ac() {
     const AC = window.AudioContext || window.webkitAudioContext;
     if (!AC) return null;
     ctx = new AC();
+    const comp = ctx.createDynamicsCompressor();
+    comp.threshold.value = -14;
+    comp.knee.value = 8;
+    comp.ratio.value = 10;
+    comp.attack.value = 0.002;
+    comp.release.value = 0.2;
+    out = ctx.createGain();
+    out.gain.value = 1;
+    out.connect(comp).connect(ctx.destination);
   }
   if (ctx.state === 'suspended') ctx.resume();
   return ctx;
@@ -26,7 +36,7 @@ function tone(freq, dur, { type = 'square', gain = 0.06, slide = 0, delay = 0 } 
   g.gain.setValueAtTime(gain, t);
   g.gain.setValueAtTime(gain, t + dur * 0.7);
   g.gain.linearRampToValueAtTime(0.0001, t + dur);
-  o.connect(g).connect(a.destination);
+  o.connect(g).connect(out);
   o.start(t);
   o.stop(t + dur + 0.02);
 }
@@ -52,7 +62,7 @@ function noise(dur, { gain = 0.12, freq = 3000, delay = 0 } = {}) {
   f.frequency.value = freq;
   const g = a.createGain();
   g.gain.value = gain;
-  src.connect(f).connect(g).connect(a.destination);
+  src.connect(f).connect(g).connect(out);
   src.start(t);
 }
 
