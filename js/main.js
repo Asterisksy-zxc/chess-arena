@@ -887,6 +887,8 @@ window.arena = {
 if (location.hash.length > 1) {
   const params = Object.fromEntries(location.hash.slice(1).split(';').map((x) => x.split('=')));
   if (params.cells || params.moves) dlgNew.close();
+  if (params.seed) game.state.seed = +params.seed >>> 0;
+  if (params.nocells) game.state.noCells = true; // новые клетки не прячутся
   if (params.cells) {
     const at = (name) => (+name.slice(1) - 1) * game.state.W + FILES.indexOf(name[0]);
     game.state.cells = Object.fromEntries(params.cells.split(',').map((x) => x.split(':')).map(([sq, type]) => [at(sq), { type }]));
@@ -895,4 +897,5 @@ if (location.hash.length > 1) {
     const [, from, to, promo] = mv.match(/^([a-n]\d+)([a-n]\d+)([qrbn])?$/) || [];
     if (from) window.arena.play(from, to, promo);
   }
+  render();
 }
