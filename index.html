@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Шахматы · Живая Арена</title>
+  <meta name="description" content="Браузерные шахматы с живым полем 10×10: клетки силы, туман войны, ночь и метеоритный дождь. Играйте вдвоём или против бота.">
+  <meta name="theme-color" content="#0e1118">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='22' fill='%23f4b942'/%3E%3Ctext x='50' y='74' font-size='68' text-anchor='middle'%3E%E2%99%9E%3C/text%3E%3C/svg%3E">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+Symbols+2&family=Unbounded:wght@600;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <div class="app">
+    <header class="topbar">
+      <div class="brand">
+        <span class="logo" aria-hidden="true">♞</span>
+        <div>
+          <h1>Живая Арена</h1>
+          <span class="tagline">шахматы, в которых поле живёт своей жизнью</span>
+        </div>
+      </div>
+      <nav class="top-actions">
+        <button class="btn ghost" id="btnRules">Как играть</button>
+        <button class="btn ghost icon" id="btnSound" aria-label="Звук" title="Звук">🔊</button>
+        <button class="btn primary" id="btnNew">Новая игра</button>
+      </nav>
+    </header>
+
+    <main class="layout">
+      <section class="board-col">
+        <div class="player-bar" id="barTop"></div>
+        <div class="board-wrap" id="boardWrap">
+          <div class="board" id="board"></div>
+          <div class="pieces" id="pieces"></div>
+          <div class="night-sky" aria-hidden="true"></div>
+          <div class="fx-layer" id="fxLayer" aria-hidden="true"></div>
+          <div class="banner" id="banner" role="status" aria-live="polite"></div>
+          <div class="cover" id="cover" hidden>
+            <div class="cover-card">
+              <div class="cover-icon">🌫️</div>
+              <h2 id="coverTitle">Ход белых</h2>
+              <p>Туман войны! Передайте устройство. Сопернику — не подглядывать.</p>
+              <button class="btn primary big" id="coverBtn">Я готов — показать доску</button>
+            </div>
+          </div>
+        </div>
+        <div class="player-bar" id="barBottom"></div>
+      </section>
+
+      <aside class="side">
+        <div class="card turn-card" id="turnCard"></div>
+        <div class="card event-card" id="eventCard"></div>
+        <div class="card history-card">
+          <div class="card-head">
+            <h3>История ходов</h3>
+            <div class="mini-actions">
+              <button class="btn ghost small" id="btnUndo" title="Отменить ход">↶ Отменить</button>
+              <button class="btn ghost small" id="btnFlip" title="Перевернуть доску">⇅</button>
+            </div>
+          </div>
+          <ol class="history" id="history"></ol>
+        </div>
+        <details class="card legend" id="legend" open>
+          <summary><h3>Клетки силы и события</h3></summary>
+          <div id="legendBody"></div>
+        </details>
+      </aside>
+    </main>
+    <footer class="foot">Azyon Incubator 2026 · «Живая Арена» — классические шахматы + живое поле</footer>
+  </div>
+
+  <dialog id="dlgNew" class="dlg">
+    <form method="dialog" class="dlg-body" id="formNew">
+      <h2>Новая игра</h2>
+      <fieldset>
+        <legend>Режим</legend>
+        <div class="choices two">
+          <label class="choice"><input type="radio" name="mode" value="arena"><span><b>🌋 Живая Арена</b><small>Поле 10×10, клетки силы, туман, ночь, метеориты</small></span></label>
+          <label class="choice"><input type="radio" name="mode" value="classic"><span><b>♟ Классика</b><small>Обычные шахматы 8×8 без событий</small></span></label>
+        </div>
+      </fieldset>
+      <fieldset>
+        <legend>Соперник</legend>
+        <div class="choices two">
+          <label class="choice"><input type="radio" name="opponent" value="human"><span><b>👥 Вдвоём</b><small>На одном устройстве</small></span></label>
+          <label class="choice"><input type="radio" name="opponent" value="bot"><span><b>🤖 Бот</b><small>Понимает все события арены</small></span></label>
+        </div>
+      </fieldset>
+      <fieldset class="bot-only">
+        <legend>Сложность бота</legend>
+        <div class="seg">
+          <label><input type="radio" name="level" value="1"><span>Новичок</span></label>
+          <label><input type="radio" name="level" value="2"><span>Любитель</span></label>
+          <label><input type="radio" name="level" value="3"><span>Мастер</span></label>
+        </div>
+      </fieldset>
+      <fieldset class="bot-only">
+        <legend>Играть за</legend>
+        <div class="seg">
+          <label><input type="radio" name="color" value="w"><span>♔ Белых</span></label>
+          <label><input type="radio" name="color" value="b"><span>♚ Чёрных</span></label>
+          <label><input type="radio" name="color" value="random"><span>🎲 Случайно</span></label>
+        </div>
+      </fieldset>
+      <fieldset>
+        <legend>Таймер на партию</legend>
+        <div class="seg">
+          <label><input type="radio" name="timer" value="0"><span>Без</span></label>
+          <label><input type="radio" name="timer" value="5"><span>5 мин</span></label>
+          <label><input type="radio" name="timer" value="10"><span>10 мин</span></label>
+          <label><input type="radio" name="timer" value="15"><span>15 мин</span></label>
+        </div>
+      </fieldset>
+      <div class="dlg-actions">
+        <button class="btn ghost" value="cancel" formnovalidate>Отмена</button>
+        <button class="btn primary big" value="start" id="btnStart">Начать партию</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="dlgRules" class="dlg wide">
+    <div class="dlg-body rules">
+      <h2>Как играть в «Живую Арену»</h2>
+      <p class="lead">Это настоящие шахматы — все фигуры ходят по классическим правилам: рокировка, взятие на проходе, превращение пешки, шах, мат и пат. Но поле больше и <b>живёт своей жизнью</b>.</p>
+      <h3>🗺️ Арена 10×10</h3>
+      <p>Обычная армия стоит по центру, по краям — открытые фланги. Пешка превращается на последней (10-й) горизонтали.</p>
+      <h3>✦ Клетки силы — личные события</h3>
+      <p>Встаньте фигурой на клетку — и эффект достанется ей. Король клетки не активирует.</p>
+      <ul class="rule-list" id="rulesTiles"></ul>
+      <h3>🌍 Мировые события — общие для всех</h3>
+      <p>Каждые несколько ходов арена объявляет событие. <b>Оно всегда объявляется за 4 хода</b> — у вас есть время подготовиться.</p>
+      <ul class="rule-list" id="rulesEvents"></ul>
+      <h3>⚖️ Честные правила</h3>
+      <ul class="plain">
+        <li>Шах, мат и пат учитывают все эффекты. Нельзя сделать ход, после которого с наступлением события ваш король окажется под боем.</li>
+        <li>Метеориты не трогают королей и фигуры под щитом.</li>
+        <li>Клетки силы появляются симметрично — у обеих сторон равные шансы.</li>
+        <li>Бот видит и учитывает все события — он тоже убегает от метеоритов.</li>
+      </ul>
+      <h3>🎮 Управление</h3>
+      <p>Нажмите на фигуру и на клетку (или перетащите). Подсвечиваются доступные ходы. «Отменить» — вернуть ход, «⇅» — перевернуть доску.</p>
+      <div class="dlg-actions"><button class="btn primary big" id="btnRulesOk">Понятно!</button></div>
+    </div>
+  </dialog>
+
+  <dialog id="dlgPromo" class="dlg small">
+    <div class="dlg-body">
+      <h2 id="promoTitle">Превращение пешки</h2>
+      <div class="promo-choices" id="promoChoices"></div>
+    </div>
+  </dialog>
+
+  <dialog id="dlgOver" class="dlg small">
+    <div class="dlg-body over">
+      <div class="over-icon" id="overIcon">🏆</div>
+      <h2 id="overTitle">Мат!</h2>
+      <p id="overText"></p>
+      <div class="dlg-actions">
+        <button class="btn ghost" id="btnOverClose">Посмотреть доску</button>
+        <button class="btn primary big" id="btnOverNew">Новая игра</button>
+      </div>
+    </div>
+  </dialog>
+
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>

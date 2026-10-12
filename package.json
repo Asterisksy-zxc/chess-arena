@@ -1,0 +1,11 @@
+{
+  "name": "chess-arena",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Шахматы «Живая Арена» — браузерные шахматы с клетками силы и мировыми событиями",
+  "scripts": {
+    "test": "node tests/run.mjs",
+    "start": "python -m http.server 8080"
+  }
+}
