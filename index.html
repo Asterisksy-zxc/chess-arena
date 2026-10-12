@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>Живая Арена — пиксельные шахматы</title>
-  <meta name="description" content="Пиксельные шахматы 12×10 со скрытыми клетками событий: метеориты, туман войны и ночь. Играйте вдвоём или против бота.">
+  <meta name="description" content="Пиксельные шахматы 8×14 со скрытыми клетками событий: лава и зеркало. Играйте вдвоём или против бота.">
   <meta name="theme-color" content="#1a1c2c">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' shape-rendering='crispEdges'%3E%3Crect width='16' height='16' fill='%231a1c2c'/%3E%3Crect x='6' y='2' width='4' height='2' fill='%23ffcd75'/%3E%3Crect x='5' y='4' width='6' height='5' fill='%23ffcd75'/%3E%3Crect x='4' y='9' width='8' height='2' fill='%23ffcd75'/%3E%3Crect x='3' y='11' width='10' height='3' fill='%23ffcd75'/%3E%3C/svg%3E">
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -31,17 +31,9 @@
         <div class="frame">
           <div class="board-wrap" id="boardWrap">
             <div class="board" id="board"></div>
-            <div class="night-sky" aria-hidden="true"></div>
             <div class="pieces" id="pieces"></div>
             <div class="fx-layer" id="fxLayer" aria-hidden="true"></div>
             <div class="banner" id="banner" role="status" aria-live="polite"></div>
-            <div class="cover" id="cover" hidden>
-              <div class="cover-box">
-                <div class="cover-title" id="coverTitle">ХОД БЕЛЫХ</div>
-                <p>Туман войны! Передайте устройство. Сопернику не подглядывать.</p>
-                <button class="pbtn hot big" id="coverBtn">ПОКАЗАТЬ ДОСКУ</button>
-              </div>
-            </div>
           </div>
         </div>
         <div class="plate" id="plateBottom"></div>
@@ -72,7 +64,7 @@
       <fieldset>
         <legend>РЕЖИМ</legend>
         <div class="opts two">
-          <label class="opt"><input type="radio" name="mode" value="arena"><span><b>АРЕНА 12×10</b><small>Скрытые клетки событий: метеориты, туман, ночь</small></span></label>
+          <label class="opt"><input type="radio" name="mode" value="arena"><span><b>АРЕНА 8×14</b><small>Длинное поле и скрытые клетки: лава и зеркало</small></span></label>
           <label class="opt"><input type="radio" name="mode" value="classic"><span><b>КЛАССИКА 8×8</b><small>Обычные шахматы без событий</small></span></label>
         </div>
       </fieldset>
@@ -118,16 +110,15 @@
   <dialog id="dlgRules" class="dlg wide">
     <div class="dlg-body rules">
       <div class="dlg-title">ПРАВИЛА</div>
-      <p>Это настоящие шахматы: рокировка, взятие на проходе, превращение пешки, шах, мат и пат работают по классическим правилам. Поле — 12×10: армия стоит по центру, по бокам широкие фланги, пешки превращаются на 10-й горизонтали.</p>
+      <p>Это настоящие шахматы: рокировка, взятие на проходе, превращение пешки, шах, мат и пат работают по классическим правилам. Поле длинное — 8×14: армии стоят далеко друг от друга, пешки превращаются на 14-й горизонтали.</p>
       <h3>КЛЕТКИ СОБЫТИЙ</h3>
-      <p>На поле спрятаны невидимые клетки — в каждой партии в новых местах. Наступите на такую клетку любой фигурой: пол засияет, как на дискотеке, клетка вспыхнет своим цветом и запустит событие:</p>
+      <p>В середине поля спрятаны невидимые клетки — в каждой партии в новых местах. Наступите на такую клетку любой фигурой: от неё по полу пройдёт диско-волна, клетка вспыхнет своим цветом и запустит событие:</p>
       <div id="rulesCells"></div>
       <h3>КАК ЭТО РАБОТАЕТ</h3>
       <ul>
-        <li>Одновременно идёт только одно событие. Пока оно идёт, остальные клетки погашены.</li>
-        <li>Клетки спрятаны симметричными парами — шансы найти их у сторон равны. Использованная клетка исчезает, а когда их становится мало, где-то прячется новая пара.</li>
-        <li>Метеориты не трогают королей. Цели видны за 2 хода — успейте увести фигуры.</li>
-        <li>Шах, мат и пат учитывают все эффекты, в том числе ночь и кратеры.</li>
+        <li>Одновременно идёт только одно событие: пока лежит лава, остальные клетки не срабатывают.</li>
+        <li>Использованная клетка исчезает, а когда их становится мало, где-то прячутся новые. Бот тоже не знает, где они.</li>
+                <li>Шах, мат и пат учитывают лаву. Событие никогда не подставляет короля того, кто нашёл клетку.</li>
       </ul>
       <h3>УПРАВЛЕНИЕ</h3>
       <p>Нажмите на фигуру, затем на клетку — или перетащите фигуру. «Отмена» возвращает ход, «Повернуть» переворачивает доску.</p>

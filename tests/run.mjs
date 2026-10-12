@@ -63,64 +63,63 @@ const play = (s, ...moves) => moves.reduce((st, mv) => {
   ok(s.board[7 * 8 + 1]?.t === 'n', 'превращение пешки в коня');
 }
 
-// ---------------- Арена 12×10
-const at = (s, name) => (+name.slice(1) - 1) * s.W + 'abcdefghijkl'.indexOf(name[0]);
+// ---------------- Арена 8×14
+const at = (s, name) => (+name.slice(1) - 1) * s.W + 'abcdefgh'.indexOf(name[0]);
 const withCells = (s, cells) => ({ ...s, cells: Object.fromEntries(Object.entries(cells).map(([k, type]) => [at(s, k), { type }])) });
 {
   const s = createGame('arena', 7);
-  ok(s.W === 12 && s.H === 10, 'арена 12×10');
-  ok(s.board[6]?.t === 'k' && s.board[9 * 12 + 6]?.t === 'k', 'короли на g1/g10');
-  ok(legalMoves(s).length === 26, `ходов на старте арены: ${legalMoves(s).length}`);
+  ok(s.W === 8 && s.H === 14, 'арена 8×14');
+  ok(s.board[4]?.t === 'k' && s.board[13 * 8 + 4]?.t === 'k', 'короли на e1/e14');
+  ok(legalMoves(s).length === 20, `ходов на старте арены: ${legalMoves(s).length}`);
   const cells = Object.keys(s.cells).map(Number);
-  ok(cells.length === 6 && cells.every((q) => s.cells[119 - q]?.type === s.cells[q].type), 'на старте 6 скрытых клеток симметричными парами');
+  const types = new Set(Object.values(s.cells).map((c) => c.type));
+  ok(cells.length === 6 && types.size === 2, 'на старте 6 скрытых клеток обоих типов');
+  ok(cells.some((q) => !s.cells[111 - q]), 'клетки расставлены без симметрии');
   const other = createGame('arena', 8);
   ok(JSON.stringify(Object.keys(other.cells)) !== JSON.stringify(Object.keys(s.cells)), 'в разных партиях клетки в разных местах');
-  let reach = false;
-  for (const m of legalMoves(s)) if (s.cells[m.to]) reach = true;
-  ok(!reach, 'первым ходом на клетку не попасть');
+  ok(!legalMoves(s).some((m) => s.cells[m.to]), 'первым ходом на клетку не попасть');
   const t = Date.now();
   const p3 = perft(s, 3);
-  ok(p3 > 0, `perft арены d3 = ${p3} за ${Date.now() - t}ms`);
+  ok(p3 > 8000, `perft арены d3 = ${p3} за ${Date.now() - t}ms`);
 }
 {
-  // Красная клетка: метеориты на половину чёрных, удар через 4 полухода
-  const base = withCells(createGame('arena', 7), { c5: 'meteor' });
-  let s = play(base, 'c2c4', 'd9d8', 'c4c5');
-  ok(s.event?.type === 'meteor' && s.event.by === 'w', 'красная клетка запустила метеориты');
-  ok(s.event.targets.length === 3 && s.event.targets.every((t) => Math.floor(t / 12) >= 5 && Math.floor(t / 12) < 9), 'цели на половине чёрных: ' + s.event.targets.map((t) => sqName(s, t)).join(' '));
-  const again = play(base, 'c2c4', 'd9d8', 'c4c5');
-  ok(JSON.stringify(again.event.targets) === JSON.stringify(s.event.targets), 'цели детерминированы зерном');
-  const targets = s.event.targets;
-  for (let i = 0; i < 4; i++) s = applyMove(s, legalMoves(s).find((m) => !targets.includes(m.to) && !s.cells[m.to]));
-  ok(!s.event && targets.every((t) => s.craters[t] !== undefined || s.board[t]?.t === 'k'), 'метеориты упали, на их месте кратеры');
+  // Лава: четверть пустых клеток на 3 хода
+  let s = withCells(createGame('arena', 7), { d5: 'lava' });
+  const before = legalMoves(play(s, 'd2d4', 'a13a12')).map((m) => m.from + '-' + m.to).join();
+  const hidden = legalMoves(play({ ...s, cells: {} }, 'd2d4', 'a13a12')).map((m) => m.from + '-' + m.to).join();
+  ok(before === hidden, 'список ходов не выдаёт, где спрятана клетка');
+  s = play(s, 'd2d4', 'a13a12', 'd4d5');
+  const lava = Object.keys(s.lava).map(Number);
+  ok(s.event?.type === 'lava' && lava.length >= 15, `лава разлилась: ${lava.length} клеток`);
+  ok(lava.every((q) => !s.board[q]), 'лава только на пустых клетках');
+  ok(!legalMoves(s).some((m) => s.lava[m.to] !== undefined), 'на лаву нельзя ходить');
+  for (let i = 0; i < 6; i++) s = applyMove(s, legalMoves(s)[0]);
+  ok(Object.keys(s.lava).length === 0 && !s.event, 'лава остыла через 3 хода каждого');
 }
 {
-  // Синяя клетка: туман для чёрных
-  let s = play(withCells(createGame('arena', 7), { f5: 'fog' }), 'f2f4', 'd9d8', 'f4f5');
-  ok(s.fog === 'b' && s.event?.type === 'fog', 'синяя клетка ослепила чёрных');
-  s = play(s, 'd8d7', 'h2h3', 'd7d6', 'h3h4', 'e9e8');
-  ok(s.fog === null && !s.event, 'туман рассеялся через 3 хода соперника');
+  // Зеркало: доска отражается слева направо, рокировка пропадает
+  let s = play(withCells(createGame('arena', 7), { c5: 'mirror' }), 'c2c4', 'h13h12', 'c4c5');
+  ok(s.board[4 * 8 + 5]?.t === 'p' && s.board[4 * 8 + 5]?.c === 'w', 'пешка c5 оказалась на f5');
+  ok(s.board[3]?.t === 'k' && s.board[13 * 8 + 3]?.t === 'k', 'короли переехали на d-вертикаль');
+  ok(!s.castle.wK && !s.castle.wQ && !s.castle.bK && !s.castle.bQ, 'рокировка пропала');
+  ok(!s.event, 'зеркало срабатывает мгновенно');
 }
 {
-  // Фиолетовая клетка: ночь, дальность ограничена; другие клетки в это время не срабатывают
-  let s = play(withCells(createGame('arena', 7), { e5: 'night', c7: 'fog' }), 'e2e4', 'd9d8', 'e4e5');
-  ok(s.night === true, 'фиолетовая клетка включила ночь');
-  s = play(s, 'd8d7');
-  ok(!legalMoves(s).some((m) => m.from === 5 && Math.floor(m.to / 12) > 3), 'ферзь ночью ходит не дальше 3 клеток');
-  s = play(s, 'h2h3', 'c9c7');
-  ok(s.fog === null && s.cells[at(s, 'c7')], 'пока идёт событие, другие клетки не срабатывают');
+  // Во время лавы другие клетки не срабатывают (клетки лава не заливает)
+  let s = play(withCells(createGame('arena', 7), { d5: 'lava', a11: 'mirror' }), 'd2d4', 'a13a12', 'd4d5', 'a12a11');
+  ok(s.cells[at(s, 'a11')]?.type === 'mirror' && s.board[4]?.t === 'k', 'пока идёт лава, другие клетки не срабатывают');
 }
 {
   // Случайная партия: движок не ломается и не допускает взятия короля
   let triggered = 0;
   for (let g = 0; g < 40; g++) {
     let s = createGame('arena', g * 977 + 13);
-    for (let i = 0; i < 180; i++) {
+    for (let i = 0; i < 200; i++) {
       const st = gameStatus(s);
       if (st.over) break;
       const m = st.moves[Math.floor(Math.random() * st.moves.length)];
       const n = applyMove(s, m);
-      if (inCheck(n, s.turn)) { ok(false, 'нелегальный ход прошёл фильтр'); break; }
+      if (inCheck(n, s.turn)) { ok(false, 'событие подставило короля того, кто ходил'); break; }
       if (n.board.filter((p) => p && p.t === 'k').length !== 2) { ok(false, 'король исчез'); break; }
       if (n.fx.some((f) => f.kind === 'trigger')) triggered++;
       s = n;

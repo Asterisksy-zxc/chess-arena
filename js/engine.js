@@ -1,26 +1,24 @@
-// Шахматный движок «Живой Арены»: классические правила + клетки событий.
+// Шахматный движок «Живой Арены»: классические правила + скрытые клетки событий.
 // Состояние неизменяемое: applyMove возвращает новое состояние, исходное не трогается.
 // Вся «случайность» арены берётся из зерна партии, поэтому ход всегда приводит
-// к одному и тому же результату — и в игре, и в расчётах бота.
+// к одному и тому же результату.
 
-export const FILES = 'abcdefghijkl';
+export const FILES = 'abcdefghijklmn';
 export const VALUES = { p: 100, n: 320, b: 330, r: 500, q: 900, k: 0 };
 export const LETTER = { k: 'Кр', q: 'Ф', r: 'Л', b: 'С', n: 'К', p: '' };
 
 // Клетки событий спрятаны: их не видно, пока на них не встанет фигура.
 export const CELLS = {
-  meteor: { color: '#ff3b5c', name: 'Метеориты', desc: 'На половину соперника падают метеориты: через 2 хода они уничтожат фигуры на отмеченных клетках и оставят кратеры.' },
-  fog:    { color: '#3fa9ff', name: 'Туман',     desc: 'Соперник ослеплён на 3 своих хода: он видит только клетки рядом со своими фигурами.' },
-  night:  { color: '#b45cff', name: 'Ночь',      desc: 'На 3 хода для всех: ладьи, слоны и ферзи ходят и бьют не дальше 3 клеток.' },
+  lava:   { color: '#ff5a00', name: 'Пол — это лава', short: 'Лава', desc: 'Четверть пустых клеток на 3 хода превращается в лаву: по ней нельзя ходить и сквозь неё нельзя бить.' },
+  mirror: { color: '#ff2bd6', name: 'Зеркало', short: 'Зеркало', desc: 'Вся доска отражается слева направо: фланги меняются местами, рокировка пропадает.' },
 };
 
 export const ARENA = {
-  meteorDelay: 4,   // полуходов от вспышки до удара (у каждого по 2 хода)
-  meteorCount: 3,
-  eventLength: 6,   // сколько полуходов длятся туман и ночь
-  craterLife: 10,
-  respawnDelay: 4,  // через сколько полуходов после события появляются новые клетки
-  minCells: 4,
+  cellCount: 6,     // сколько скрытых клеток на старте
+  minCells: 3,      // если осталось меньше — прячутся новые
+  lavaShare: 0.25,  // доля пустых клеток, которые становятся лавой
+  lavaLength: 6,    // сколько полуходов держится лава (по 3 хода каждому)
+  respawnDelay: 4,
 };
 
 const ORTH = [[1, 0], [-1, 0], [0, 1], [0, -1]];
@@ -31,7 +29,7 @@ const KNIGHT = [[1, 2], [2, 1], [2, -1], [1, -2], [-1, -2], [-2, -1], [-2, 1], [
 export const opp = (c) => (c === 'w' ? 'b' : 'w');
 export const sqName = (s, sq) => FILES[sq % s.W] + (Math.floor(sq / s.W) + 1);
 const rowOf = (s, sq) => Math.floor(sq / s.W);
-const mirror = (s, sq) => s.W * s.H - 1 - sq; // центральная симметрия
+export const mirrorFile = (s, sq) => rowOf(s, sq) * s.W + (s.W - 1 - (sq % s.W));
 
 // Детерминированный генератор: одинаковые (зерно, ход, клетка) — одинаковый результат.
 function rngFor(seed, a, b = 0) {
@@ -56,48 +54,43 @@ function shuffle(arr, rng) {
 // ---------------------------------------------------------------- создание
 
 export function createGame(mode = 'arena', seed = 1) {
-  const W = mode === 'arena' ? 12 : 8, H = mode === 'arena' ? 10 : 8;
-  const off = (W - 8) / 2;
+  const W = 8, H = mode === 'arena' ? 14 : 8;
   const board = new Array(W * H).fill(null);
   const back = ['r', 'n', 'b', 'q', 'k', 'b', 'n', 'r'];
   let id = 0;
   for (let i = 0; i < 8; i++) {
-    board[off + i] = { t: back[i], c: 'w', id: id++ };
-    board[W + off + i] = { t: 'p', c: 'w', id: id++ };
-    board[(H - 2) * W + off + i] = { t: 'p', c: 'b', id: id++ };
-    board[(H - 1) * W + off + i] = { t: back[i], c: 'b', id: id++ };
+    board[i] = { t: back[i], c: 'w', id: id++ };
+    board[W + i] = { t: 'p', c: 'w', id: id++ };
+    board[(H - 2) * W + i] = { t: 'p', c: 'b', id: id++ };
+    board[(H - 1) * W + i] = { t: back[i], c: 'b', id: id++ };
   }
   const s = {
     W, H, mode, board, seed: seed >>> 0, turn: 'w',
     castle: { wK: true, wQ: true, bK: true, bQ: true },
-    kingFile: off + 4, rookFiles: [off, off + 7],
+    kingFile: 4, rookFiles: [0, 7],
     ep: -1, ply: 0, halfmove: 0, fullmove: 1,
-    cells: {}, craters: {}, event: null, night: false, fog: null,
+    cells: {}, lava: {}, event: null,
     nextSpawnPly: 0, lost: { w: [], b: [] }, fx: [],
   };
-  if (mode === 'arena') placeHiddenCells(s);
+  if (mode === 'arena') hideCells(s, ARENA.cellCount, rngFor(s.seed, 0, 777), true);
   return s;
 }
 
-// Невидимые клетки событий: случайные места (симметричными парами, чтобы шансы были равны),
-// но не там, куда пешки могут шагнуть первым же ходом.
-function placeHiddenCells(s) {
-  const rng = rngFor(s.seed, 0, 777);
+// Прячет клетки в случайных местах середины поля, но не там, куда пешки
+// могут шагнуть первым же ходом. Типы: на старте хотя бы по одному каждого.
+function hideCells(s, count, rng, initial) {
   const { W, H } = s;
-  const pawnReach = (sq) => {
-    const r = rowOf(s, sq), c = sq % W;
-    const pawnFile = c >= s.rookFiles[0] && c <= s.rookFiles[1];
-    return pawnFile && (r === 2 || r === 3 || r === H - 3 || r === H - 4);
-  };
   const pool = [];
   for (let sq = 0; sq < W * H; sq++) {
     const r = rowOf(s, sq);
-    if (r >= 2 && r <= H - 3 && sq < mirror(s, sq) && !pawnReach(sq)) pool.push(sq);
+    if (r < 4 || r > H - 5) continue;
+    if (s.board[sq] || s.cells[sq] || s.lava[sq] !== undefined) continue;
+    pool.push(sq);
   }
-  const types = shuffle(Object.keys(CELLS), rng);
-  shuffle(pool, rng).slice(0, types.length).forEach((sq, i) => {
-    s.cells[sq] = { type: types[i] };
-    s.cells[mirror(s, sq)] = { type: types[i] };
+  const types = Object.keys(CELLS);
+  shuffle(pool, rng).slice(0, count).forEach((sq, i) => {
+    const type = initial && i < types.length ? types[i] : types[Math.floor(rng() * types.length)];
+    s.cells[sq] = { type };
   });
 }
 
@@ -107,7 +100,7 @@ function cloneState(s) {
     board: s.board.slice(),
     castle: { ...s.castle },
     cells: { ...s.cells },
-    craters: { ...s.craters },
+    lava: { ...s.lava },
     lost: { w: s.lost.w, b: s.lost.b },
     fx: [],
   };
@@ -139,20 +132,19 @@ export function isAttacked(s, sq, by) {
     const p = b[rr * W + cc];
     if (p && p.c === by && p.t === 'k') return true;
   }
-  const range = s.night ? 3 : W;
   for (let i = 0; i < 8; i++) {
     const [dr, dc] = KING[i];
     const diag = i >= 4;
-    let rr = r + dr, cc = c + dc, d = 1;
-    while (rr >= 0 && rr < H && cc >= 0 && cc < W && d <= range) {
+    let rr = r + dr, cc = c + dc;
+    while (rr >= 0 && rr < H && cc >= 0 && cc < W) {
       const q = rr * W + cc;
-      if (s.craters[q] !== undefined) break;
+      if (s.lava[q] !== undefined) break;
       const p = b[q];
       if (p) {
         if (p.c === by && (p.t === 'q' || (diag ? p.t === 'b' : p.t === 'r'))) return true;
         break;
       }
-      rr += dr; cc += dc; d++;
+      rr += dr; cc += dc;
     }
   }
   return false;
@@ -171,41 +163,6 @@ export function inCheck(s, color) {
   return k >= 0 && isAttacked(s, k, opp(color));
 }
 
-// Бьёт ли фигура с клетки from клетку to.
-export function pieceAttacks(s, from, to) {
-  const W = s.W, p = s.board[from];
-  if (!p) return false;
-  const dr = Math.floor(to / W) - Math.floor(from / W), dc = (to % W) - (from % W);
-  const adr = Math.abs(dr), adc = Math.abs(dc);
-  switch (p.t) {
-    case 'p': return adc === 1 && dr === (p.c === 'w' ? 1 : -1);
-    case 'n': return (adr === 1 && adc === 2) || (adr === 2 && adc === 1);
-    case 'k': return Math.max(adr, adc) === 1;
-  }
-  const straight = dr === 0 || dc === 0, diag = adr === adc;
-  if ((p.t === 'r' && !straight) || (p.t === 'b' && !diag) || (p.t === 'q' && !straight && !diag)) return false;
-  const dist = Math.max(adr, adc);
-  if (dist === 0 || (s.night && dist > 3)) return false;
-  const sr = Math.sign(dr), sc = Math.sign(dc);
-  for (let i = 1; i < dist; i++) {
-    const q = from + (sr * i) * W + sc * i;
-    if (s.board[q] || s.craters[q] !== undefined) return false;
-  }
-  return true;
-}
-
-// Фигуры, которые сейчас бьют короля стороны color.
-export function checkers(s, color) {
-  const k = findKing(s, color);
-  const res = [];
-  if (k < 0) return res;
-  for (let sq = 0; sq < s.board.length; sq++) {
-    const p = s.board[sq];
-    if (p && p.c !== color && pieceAttacks(s, sq, k)) res.push(sq);
-  }
-  return res;
-}
-
 // ---------------------------------------------------------------- генерация ходов
 
 export function pseudoMoves(s, color = s.turn) {
@@ -222,6 +179,7 @@ function genPiece(s, from, out) {
   const r = Math.floor(from / W), c = from % W;
   const enemy = opp(p.c);
   const canCapture = (t) => t.c === enemy && t.t !== 'k';
+  const open = (sq) => s.lava[sq] === undefined;
 
   if (p.t === 'p') {
     const dir = p.c === 'w' ? 1 : -1;
@@ -234,11 +192,11 @@ function genPiece(s, from, out) {
       else out.push({ from, to, ...extra });
     };
     const f1 = r1 * W + c;
-    if (!b[f1] && s.craters[f1] === undefined) {
+    if (!b[f1] && open(f1)) {
       push(f1, {});
       if (r === start) {
         const f2 = (r + 2 * dir) * W + c;
-        if (!b[f2] && s.craters[f2] === undefined) out.push({ from, to: f2, double: true });
+        if (!b[f2] && open(f2)) out.push({ from, to: f2, double: true });
       }
     }
     for (const dc of [-1, 1]) {
@@ -248,7 +206,7 @@ function genPiece(s, from, out) {
       const t = b[to];
       if (t) {
         if (canCapture(t)) push(to, { capture: true });
-      } else if (to === s.ep) {
+      } else if (to === s.ep && open(to)) {
         const v = b[r * W + c1];
         if (v && v.t === 'p' && v.c === enemy) out.push({ from, to, ep: true, capture: true });
       }
@@ -261,7 +219,7 @@ function genPiece(s, from, out) {
       const rr = r + dr, cc = c + dc;
       if (rr < 0 || rr >= H || cc < 0 || cc >= W) continue;
       const to = rr * W + cc;
-      if (s.craters[to] !== undefined) continue;
+      if (!open(to)) continue;
       const t = b[to];
       if (!t) out.push({ from, to });
       else if (canCapture(t)) out.push({ from, to, capture: true });
@@ -271,19 +229,18 @@ function genPiece(s, from, out) {
   }
 
   const dirs = p.t === 'r' ? ORTH : p.t === 'b' ? DIAG : KING;
-  const range = s.night ? 3 : W;
   for (const [dr, dc] of dirs) {
-    let rr = r + dr, cc = c + dc, d = 1;
-    while (rr >= 0 && rr < H && cc >= 0 && cc < W && d <= range) {
+    let rr = r + dr, cc = c + dc;
+    while (rr >= 0 && rr < H && cc >= 0 && cc < W) {
       const to = rr * W + cc;
-      if (s.craters[to] !== undefined) break;
+      if (!open(to)) break;
       const t = b[to];
       if (!t) out.push({ from, to });
       else {
         if (canCapture(t)) out.push({ from, to, capture: true });
         break;
       }
-      rr += dr; cc += dc; d++;
+      rr += dr; cc += dc;
     }
   }
 }
@@ -301,7 +258,7 @@ function genCastle(s, from, color, out) {
     let clear = true;
     for (let f = Math.min(kf, rf) + 1; f < Math.max(kf, rf); f++) {
       const q = home * W + f;
-      if (s.board[q] || s.craters[q] !== undefined) { clear = false; break; }
+      if (s.board[q] || s.lava[q] !== undefined) { clear = false; break; }
     }
     if (!clear) continue;
     if (attackedNow === null) attackedNow = isAttacked(s, from, enemy);
@@ -314,7 +271,9 @@ function genCastle(s, from, color, out) {
 
 // ---------------------------------------------------------------- применение хода
 
-export function applyMove(s, m) {
+// noTrigger: применить ход, не трогая скрытые клетки. Так проверяется легальность,
+// чтобы список возможных ходов никогда не выдавал, где спрятаны клетки.
+export function applyMove(s, m, noTrigger = false) {
   const n = cloneState(s);
   const W = n.W;
   const piece = n.board[m.from];
@@ -337,7 +296,7 @@ export function applyMove(s, m) {
   }
   n.halfmove = piece.t === 'p' || captured ? 0 : n.halfmove + 1;
   n.ep = m.double ? (m.from + m.to) / 2 : -1;
-  if (n.mode === 'arena' && n.cells[m.to] && !n.event) triggerCell(n, m.to, mover);
+  if (!noTrigger && n.mode === 'arena' && n.cells[m.to] && !n.event) triggerCell(n, m.to, mover);
   endTurn(n);
   return n;
 }
@@ -350,43 +309,34 @@ function touchCastle(n, sq) {
   }
 }
 
-// Фигура встала на клетку события: клетка вспыхивает, событие начинается.
+// Фигура встала на скрытую клетку: клетка вспыхивает, событие начинается.
+// Оба события не могут подставить короля того, кто наступил: лава только
+// перекрывает линии, а зеркало сохраняет все расстояния между фигурами.
 function triggerCell(n, sq, by) {
   const type = n.cells[sq].type;
   delete n.cells[sq];
   const p = n.ply;
-  const ev = { type, by, sq, startedPly: p };
-  if (type === 'meteor') {
-    ev.impactPly = p + ARENA.meteorDelay;
-    ev.targets = pickMeteorTargets(n, by, rngFor(n.seed, p, sq));
-  } else {
-    ev.endPly = p + ARENA.eventLength;
-    if (type === 'fog') n.fog = opp(by);
-    if (type === 'night') n.night = true;
-  }
-  n.event = ev;
   n.fx.push({ kind: 'trigger', type, sq, by });
-}
-
-function pickMeteorTargets(n, by, rng) {
-  const H = n.H, enemy = opp(by);
-  // половина соперника без его последней горизонтали — оттуда фигуры часто некуда увести
-  const half = (sq) => {
-    const r = rowOf(n, sq);
-    return by === 'w' ? r >= H / 2 && r < H - 1 : r < H / 2 && r > 0;
-  };
-  const ok = [];
-  for (let sq = 0; sq < n.W * H; sq++) {
-    const p = n.board[sq];
-    if (half(sq) && !(p && p.t === 'k') && n.craters[sq] === undefined && !n.cells[sq]) ok.push(sq);
+  if (type === 'lava') {
+    const rng = rngFor(n.seed, p, sq);
+    const empty = [];
+    for (let q = 0; q < n.W * n.H; q++) if (!n.board[q] && n.lava[q] === undefined && !n.cells[q]) empty.push(q);
+    const picked = shuffle(empty, rng).slice(0, Math.round(empty.length * ARENA.lavaShare));
+    for (const q of picked) n.lava[q] = p + ARENA.lavaLength;
+    n.event = { type, by, sq, startedPly: p, endPly: p + ARENA.lavaLength };
+    n.fx.push({ kind: 'lava', squares: picked });
+  } else if (type === 'mirror') {
+    const flip = (q) => mirrorFile(n, q);
+    const board = new Array(n.board.length).fill(null);
+    n.board.forEach((x, q) => { board[flip(q)] = x; });
+    n.board = board;
+    n.lava = Object.fromEntries(Object.entries(n.lava).map(([q, v]) => [flip(+q), v]));
+    n.cells = Object.fromEntries(Object.entries(n.cells).map(([q, v]) => [flip(+q), v]));
+    if (n.ep >= 0) n.ep = flip(n.ep);
+    n.castle = { wK: false, wQ: false, bK: false, bQ: false };
+    n.nextSpawnPly = p + ARENA.respawnDelay;
+    n.fx.push({ kind: 'mirror' });
   }
-  const enemies = shuffle(ok.filter((sq) => n.board[sq] && n.board[sq].c === enemy), rng);
-  const res = enemies.slice(0, 2);
-  for (const sq of shuffle(ok, rng)) {
-    if (res.length >= ARENA.meteorCount) break;
-    if (!res.includes(sq)) res.push(sq);
-  }
-  return res;
 }
 
 function endTurn(n) {
@@ -396,60 +346,21 @@ function endTurn(n) {
   if (n.mode === 'arena') tickWorld(n);
 }
 
-// Изменения мира в начале хода: удары метеоритов, конец тумана и ночи, новые клетки.
+// Изменения мира в начале хода: лава остывает, прячутся новые клетки.
 function tickWorld(n) {
-  const fx = n.fx;
-  for (const k of Object.keys(n.craters)) {
-    if (n.craters[k] <= n.ply) {
-      delete n.craters[k];
-      fx.push({ kind: 'craterGone', sq: +k });
-    }
+  for (const k of Object.keys(n.lava)) {
+    if (n.lava[k] <= n.ply) delete n.lava[k];
   }
   const ev = n.event;
-  if (ev && ev.type === 'meteor' && n.ply >= ev.impactPly) {
-    for (const t of ev.targets) {
-      const p = n.board[t];
-      if (p && p.t === 'k') { fx.push({ kind: 'meteorBlocked', sq: t }); continue; }
-      if (p) {
-        n.board[t] = null;
-        n.lost = { ...n.lost, [p.c]: [...n.lost[p.c], p] };
-        fx.push({ kind: 'meteorKill', sq: t, piece: p });
-      } else {
-        fx.push({ kind: 'meteorHit', sq: t });
-      }
-      delete n.cells[t];
-      n.craters[t] = n.ply + ARENA.craterLife;
-    }
-    finishEvent(n);
-  } else if (ev && ev.endPly !== undefined && n.ply >= ev.endPly) {
-    n.night = false;
-    n.fog = null;
-    fx.push({ kind: 'eventEnd', type: ev.type });
-    finishEvent(n);
+  if (ev && n.ply >= ev.endPly) {
+    n.fx.push({ kind: 'eventEnd', type: ev.type });
+    n.event = null;
+    n.nextSpawnPly = n.ply + ARENA.respawnDelay;
   }
-  if (!n.event && n.ply >= n.nextSpawnPly && Object.keys(n.cells).length < ARENA.minCells) spawnPair(n);
-}
-
-function finishEvent(n) {
-  n.event = null;
-  n.nextSpawnPly = n.ply + ARENA.respawnDelay;
-}
-
-function spawnPair(n) {
-  const rng = rngFor(n.seed, n.ply, 4242);
-  const free = (sq) => !n.board[sq] && !n.cells[sq] && n.craters[sq] === undefined;
-  const pool = [];
-  for (let sq = 0; sq < n.W * n.H; sq++) {
-    const r = rowOf(n, sq);
-    if (r >= 2 && r <= n.H - 3 && sq < mirror(n, sq) && free(sq) && free(mirror(n, sq))) pool.push(sq);
+  if (!n.event && n.ply >= n.nextSpawnPly && Object.keys(n.cells).length < ARENA.minCells) {
+    hideCells(n, 2, rngFor(n.seed, n.ply, 4242), false);
+    n.fx.push({ kind: 'cellsHidden' });
   }
-  if (!pool.length) return;
-  const sq = pool[Math.floor(rng() * pool.length)];
-  const types = Object.keys(CELLS);
-  const type = types[Math.floor(rng() * types.length)];
-  n.cells[sq] = { type };
-  n.cells[mirror(n, sq)] = { type };
-  n.fx.push({ kind: 'cellSpawn', sq, type }, { kind: 'cellSpawn', sq: mirror(n, sq), type });
 }
 
 // ---------------------------------------------------------------- легальность и итог
@@ -457,7 +368,7 @@ function spawnPair(n) {
 export function legalMoves(s) {
   const res = [];
   for (const m of pseudoMoves(s)) {
-    if (!inCheck(applyMove(s, m), s.turn)) res.push(m);
+    if (!inCheck(applyMove(s, m, true), s.turn)) res.push(m);
   }
   return res;
 }
@@ -474,9 +385,8 @@ export function positionKey(s) {
   k += s.turn + (s.castle.wK ? 'K' : '') + (s.castle.wQ ? 'Q' : '') + (s.castle.bK ? 'k' : '') + (s.castle.bQ ? 'q' : '');
   k += s.ep;
   if (s.mode === 'arena') {
-    k += '|' + Object.keys(s.cells).sort().map((q) => q + s.cells[q].type[0]).join(',');
-    k += '|' + Object.keys(s.craters).sort().join(',');
-    k += '|' + (s.event ? s.event.type + s.event.startedPly : '');
+    k += '|' + Object.keys(s.cells).sort().join(',');
+    k += '|' + Object.keys(s.lava).sort().join(',');
   }
   return k;
 }
@@ -546,7 +456,7 @@ export function perft(s, depth) {
   if (depth === 0) return 1;
   let total = 0;
   for (const m of pseudoMoves(s)) {
-    const n = applyMove(s, m);
+    const n = applyMove(s, m, true);
     if (inCheck(n, s.turn)) continue;
     total += depth === 1 ? 1 : perft(n, depth - 1);
   }

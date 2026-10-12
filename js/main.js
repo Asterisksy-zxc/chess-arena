@@ -1,6 +1,6 @@
 import {
-  createGame, applyMove, gameStatus, positionKey, moveToSan, inCheck, checkers,
-  findKing, opp, pseudoMoves, CELLS, ARENA, VALUES, FILES,
+  createGame, applyMove, gameStatus, positionKey, moveToSan, findKing, opp, mirrorFile,
+  CELLS, ARENA, VALUES, FILES,
 } from './engine.js';
 import { LEVELS, findBestMove } from './ai.js';
 import { pieceSprite, iconSprite } from './sprites.js';
@@ -18,8 +18,7 @@ const save = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } cat
 
 const NAME = { w: 'БЕЛЫЕ', b: 'ЧЁРНЫЕ' };
 const GEN = { w: 'БЕЛЫХ', b: 'ЧЁРНЫХ' };
-const TRIGGER_TITLE = { meteor: 'МЕТЕОРИТНЫЙ ДОЖДЬ!', fog: 'ТУМАН ВОЙНЫ!', night: 'НАСТУПИЛА НОЧЬ!' };
-const END_TITLE = { fog: 'ТУМАН РАССЕЯЛСЯ', night: 'РАССВЕТ' };
+const NEON = ['#ff2e88', '#29f0ff', '#ffe14d', '#9b5cff', '#39ff14', '#ff7a1a', '#00a2ff', '#ff2bd6'];
 
 const settings = { mode: 'arena', opponent: 'human', level: '2', color: 'w', timer: '0', ...load('arena.settings') };
 
@@ -31,7 +30,7 @@ let squares = [];
 const pieceEls = new Map();
 let thinking = false;
 let aiToken = 0;
-let coverOn = false;
+let animLock = false; // пока идёт диско-волна, ходить нельзя
 let drag = null;
 
 const bg = (url) => `background-image:${url}`;
@@ -119,20 +118,21 @@ function newGame(silent = false) {
   };
   aiToken++;
   thinking = false;
+  animLock = false;
+  stopDisco();
   if (pending.size) restartWorker();
   selected = -1;
   flipped = humanColor === 'b';
-  hideCover();
   if ($('#dlgOver').open) $('#dlgOver').close();
   buildBoard();
   renderLegend();
   render();
-  if (!silent) banner({ title: 'ИГРА НАЧАЛАСЬ!', text: state.mode === 'arena' ? 'Встаньте на цветную клетку, чтобы запустить событие' : 'Классические шахматы', color: '#ffcd75' });
+  if (!silent) banner({ title: 'ИГРА НАЧАЛАСЬ!', text: state.mode === 'arena' ? 'Где-то на поле спрятаны клетки событий. Найдите их!' : 'Классические шахматы', color: '#ffe14d' });
   maybeBot();
 }
 
 function canHumanAct() {
-  return game && !game.over && !thinking && !coverOn && (!game.humanColor || game.state.turn === game.humanColor);
+  return game && !game.over && !thinking && !animLock && (!game.humanColor || game.state.turn === game.humanColor);
 }
 
 function makeMove(m) {
@@ -146,29 +146,42 @@ function makeMove(m) {
   const key = positionKey(n);
   const reps = (game.reps.get(key) || 0) + 1;
   game.reps.set(key, reps);
-  game.state = n;
-  game.status = gameStatus(n, reps);
-  game.lastMove = { from: m.from, to: m.to };
-
-  const mover = s.turn;
+  const status = gameStatus(n, reps);
   const trig = n.fx.find((f) => f.kind === 'trigger');
-  const suffix = game.status.over && game.status.kind === 'mate' ? '#' : game.status.check ? '+' : '';
-  game.history.push({
-    color: mover, san: san + suffix, num: s.fullmove,
-    ev: trig ? trig.type : null,
-    hiddenFrom: n.fog && n.fog !== mover ? n.fog : null,
-  });
-
+  const suffix = status.over && status.kind === 'mate' ? '#' : status.check ? '+' : '';
+  game.history.push({ color: s.turn, san: san + suffix, num: s.fullmove, ev: trig ? trig.type : null });
+  game.lastMove = { from: m.from, to: m.to };
   selected = -1;
   if (n.fx.some((f) => f.kind === 'capture')) sound.capture();
   else sound.move();
-  if (game.status.check) setTimeout(() => sound.check(), 120);
 
-  if (game.status.over) finish(game.status);
-  if (!game.over && !game.humanColor && n.fog && n.turn !== n.fog) showCover(n.turn);
-  render(n.fx);
-  playFx(n.fx);
-  if (!game.over) maybeBot();
+  const commit = () => {
+    if (n.fx.some((f) => f.kind === 'mirror')) {
+      game.lastMove = { from: mirrorFile(n, m.from), to: mirrorFile(n, m.to) };
+    }
+    game.state = n;
+    game.status = status;
+    if (status.check) setTimeout(() => sound.check(), 120);
+    if (status.over) finish(status);
+    render(n.fx);
+    playFx(n.fx);
+    if (!game.over) maybeBot();
+  };
+
+  if (!trig) { commit(); return; }
+
+  // Клетка найдена: сначала показываем ход без события, по полу идёт диско-волна,
+  // и только потом событие срабатывает.
+  game.state = applyMove(s, m, true);
+  game.status = { ...gameStatus(game.state), moves: [] };
+  animLock = true;
+  render([]);
+  const token = aiToken;
+  discoWave(trig.sq, CELLS[trig.type].color).then(() => {
+    if (token !== aiToken || game.state.ply !== n.ply) return;
+    animLock = false;
+    commit();
+  });
 }
 
 function maybeBot() {
@@ -179,9 +192,8 @@ function maybeBot() {
   const t0 = performance.now();
   renderTurn();
   renderPlates();
-  // в тумане бот «теряется» и играет как новичок
-  const level = s.fog === s.turn ? 1 : +settings.level;
-  askBot({ ...s, cells: {} }, level).then((mv) => {
+  // бот не знает, где спрятаны клетки
+  askBot({ ...s, cells: {} }, +settings.level).then((mv) => {
     if (token !== aiToken) return;
     const wait = Math.max(0, 550 - (performance.now() - t0));
     setTimeout(() => {
@@ -195,7 +207,7 @@ function maybeBot() {
 }
 
 function undo() {
-  if (!game.snapshots.length || coverOn) return;
+  if (!game.snapshots.length || animLock) return;
   aiToken++;
   if (thinking) restartWorker();
   thinking = false;
@@ -236,52 +248,10 @@ function resultInfo(res) {
 
 function showOver(res) {
   const info = resultInfo(res);
-  const icon = $('#overIcon');
-  icon.style.backgroundImage = iconSprite(info.icon || 'crown', info.icon === 'skull' ? '#f4f4f4' : info.win ? '#ffcd75' : '#94b0c2');
+  $('#overIcon').style.backgroundImage = iconSprite(info.icon || 'crown', info.icon === 'skull' ? '#ffffff' : info.win ? '#ffe14d' : '#b9b2ff');
   $('#overTitle').textContent = info.title;
   $('#overText').textContent = info.text;
   $('#dlgOver').showModal();
-}
-
-// ---------------------------------------------------------------- туман
-
-function showCover(color) {
-  coverOn = true;
-  $('#coverTitle').textContent = `ХОД ${GEN[color]}`;
-  $('#cover').hidden = false;
-}
-function hideCover() {
-  coverOn = false;
-  $('#cover').hidden = true;
-}
-
-function fogVisibility(s, viewer) {
-  const { W, H } = s, vis = new Set();
-  for (let sq = 0; sq < W * H; sq++) {
-    const p = s.board[sq];
-    if (!p || p.c !== viewer) continue;
-    const r = Math.floor(sq / W), c = sq % W;
-    for (let dr = -1; dr <= 1; dr++) {
-      for (let dc = -1; dc <= 1; dc++) {
-        const rr = r + dr, cc = c + dc;
-        if (rr >= 0 && rr < H && cc >= 0 && cc < W) vis.add(rr * W + cc);
-      }
-    }
-  }
-  for (const m of pseudoMoves(s, viewer)) vis.add(m.to);
-  for (const c of checkers(s, viewer)) vis.add(c);
-  return vis;
-}
-
-function computeView() {
-  const s = game.state;
-  const viewer = game.humanColor || s.turn;
-  const vis = s.fog === viewer && !game.over ? fogVisibility(s, viewer) : null;
-  const doomed = new Set();
-  if (s.event && s.event.type === 'meteor') {
-    for (const t of s.event.targets) if (s.board[t] && s.board[t].t !== 'k') doomed.add(t);
-  }
-  return { viewer, vis, doomed, moves: game.status.moves };
 }
 
 // ---------------------------------------------------------------- отрисовка
@@ -310,13 +280,9 @@ function updateSqSize() {
   wrapEl.style.setProperty('--sq', wrapEl.clientWidth / game.state.W + 'px');
 }
 
-function render(fx = []) {
-  const view = computeView();
-  const delayed = new Map();
-  for (const f of fx) if (f.kind === 'meteorKill') delayed.set(f.piece.id, 560);
-  wrapEl.classList.toggle('night', !!game.state.night);
-  renderSquares(view, fx);
-  renderPieces(view, delayed);
+function render() {
+  renderSquares();
+  renderPieces();
   renderTurn();
   renderEvent();
   renderPlates();
@@ -324,32 +290,26 @@ function render(fx = []) {
   $('#btnUndo').disabled = !game.snapshots.length;
 }
 
-function renderSquares(view) {
+function renderSquares() {
   const s = game.state, { W, H } = s;
   const targets = new Map();
-  if (selected >= 0) for (const m of view.moves) if (m.from === selected) targets.set(m.to, m);
+  if (selected >= 0) for (const m of game.status.moves) if (m.from === selected) targets.set(m.to, m);
   const checkSq = game.status.check ? findKing(s, s.turn) : -1;
   const ev = s.event;
-  const meteor = ev && ev.type === 'meteor' ? new Set(ev.targets) : null;
-  const left = meteor ? ev.impactPly - s.ply : 0;
   for (let sq = 0; sq < W * H; sq++) {
     const d = squares[sq];
     const r = Math.floor(sq / W), c = sq % W;
     const { row, col } = disp(sq);
-    const fogged = view.vis && !view.vis.has(sq);
     const p = s.board[sq];
     const cls = ['sq', (r + c) % 2 === 0 ? 'dark' : 'light'];
-    if (game.lastMove && (game.lastMove.from === sq || game.lastMove.to === sq) && !fogged) cls.push('last');
+    if (game.lastMove && (game.lastMove.from === sq || game.lastMove.to === sq)) cls.push('last');
     if (sq === selected) cls.push('sel');
     if (sq === checkSq) cls.push('check');
-    if (fogged) cls.push('fog');
-    if (p && !(fogged && p.c !== view.viewer)) cls.push('occupied');
     let html = '';
     if (col === 0) html += `<span class="coord rank">${r + 1}</span>`;
     if (row === H - 1) html += `<span class="coord file">${FILES[c]}</span>`;
     if (ev && ev.sq === sq) html += `<div class="cell lit" style="--ec:${CELLS[ev.type].color}"></div>`;
-    if (s.craters[sq] !== undefined) html += `<div class="crater"><b>${s.craters[sq] - s.ply}</b></div>`;
-    if (meteor && meteor.has(sq)) html += `<div class="target"><b>${left}</b></div>`;
+    if (s.lava[sq] !== undefined) html += `<div class="lava"><b>${Math.ceil((s.lava[sq] - s.ply) / 2)}</b></div>`;
     const t = targets.get(sq);
     if (t) html += t.capture && p ? '<div class="cap"></div>' : '<div class="dot"></div>';
     const cn = cls.join(' ');
@@ -358,7 +318,7 @@ function renderSquares(view) {
   }
 }
 
-function renderPieces(view, delayed) {
+function renderPieces() {
   const s = game.state, { W, H } = s;
   const seen = new Set();
   for (let sq = 0; sq < W * H; sq++) {
@@ -380,22 +340,15 @@ function renderPieces(view, delayed) {
     }
     const sprite = p.t + p.c;
     if (e._sprite !== sprite) { e.style.backgroundImage = pieceSprite(p.t, p.c); e._sprite = sprite; }
-    const cls = ['pc'];
-    if ('rbq'.includes(p.t)) cls.push('slider');
-    if (view.doomed.has(sq)) cls.push('doomed');
-    if (view.vis && !view.vis.has(sq) && p.c !== view.viewer) cls.push('hidden');
     const dragging = drag && drag.id === p.id && drag.moved;
-    if (dragging) cls.push('dragging');
-    e.className = cls.join(' ');
+    e.className = dragging ? 'pc dragging' : 'pc';
     if (!dragging && e.style.transform !== pos) e.style.transform = pos;
   }
   for (const [id, e] of pieceEls) {
     if (seen.has(id)) continue;
     pieceEls.delete(id);
-    setTimeout(() => {
-      e.classList.add('dying');
-      setTimeout(() => e.remove(), 380);
-    }, delayed.get(id) || 0);
+    e.classList.add('dying');
+    setTimeout(() => e.remove(), 380);
   }
 }
 
@@ -403,8 +356,7 @@ function renderTurn() {
   const s = game.state, c = s.turn;
   let title, sub = '';
   if (game.over) {
-    const info = resultInfo(game.over);
-    title = info.title;
+    title = resultInfo(game.over).title;
   } else if (game.humanColor) {
     title = c === game.humanColor ? 'ВАШ ХОД' : 'ХОД БОТА';
     sub = thinking ? 'Бот думает…' : `Вы играете за ${GEN[game.humanColor].toLowerCase()} · ход ${s.fullmove}`;
@@ -433,21 +385,15 @@ function renderEvent() {
   if (panel.hidden) return;
   const ev = s.event;
   let html = '<div class="panel-title">СОБЫТИЕ</div>';
-  if (!ev) {
+  if (animLock) {
+    html += '<div class="ev-idle"><b class="disco-text">ДИСКО!</b>Клетка найдена — пол сходит с ума…</div>';
+  } else if (!ev) {
     const hidden = Object.keys(s.cells).length;
-    html += `<div class="ev-idle"><b>ЗАТИШЬЕ</b>На поле спрятано клеток: <span class="hidden-count">${hidden}</span>. Наступите на такую — пол засияет, как на дискотеке, и начнётся событие.</div>`;
+    html += `<div class="ev-idle"><b>ЗАТИШЬЕ</b>На поле спрятано клеток: <span class="hidden-count">${hidden}</span>. Наступите на такую — по полу пройдёт диско-волна, и начнётся событие.</div>`;
   } else {
     const C = CELLS[ev.type];
-    const by = `Запустили ${NAME[ev.by].toLowerCase()}`;
-    let text, left, total;
-    if (ev.type === 'meteor') {
-      left = ev.impactPly - s.ply; total = ARENA.meteorDelay;
-      text = `${by}. Удар через ${left} — уводите фигуры с красных прицелов!`;
-    } else {
-      left = ev.endPly - s.ply; total = ARENA.eventLength;
-      text = ev.type === 'fog' ? `${by}. ${NAME[s.fog]} видят только своё окружение.` : `${by}. Дальнобойные фигуры бьют лишь на 3 клетки.`;
-    }
-    html += `<div class="ev-row"><div class="ev-swatch" style="--c:${C.color}"></div><div><div class="ev-name" style="color:${C.color}">${C.name.toUpperCase()}</div><div class="ev-text">${text}</div></div></div>${meter(left, total, C.color)}`;
+    const left = Math.ceil((ev.endPly - s.ply) / 2), total = ARENA.lavaLength / 2;
+    html += `<div class="ev-row"><div class="ev-swatch" style="--c:${C.color}"></div><div><div class="ev-name" style="color:${C.color}">${C.name.toUpperCase()}</div><div class="ev-text">Нашли ${NAME[ev.by].toLowerCase()}. По лаве нельзя ходить и сквозь неё нельзя бить. Остынет через ${left}.</div></div></div>${meter(left, total, C.color)}`;
   }
   panel.innerHTML = html;
 }
@@ -508,11 +454,7 @@ function renderHistory() {
     ol.innerHTML = '<li class="history-empty">ХОДОВ ПОКА НЕТ</li>';
     return;
   }
-  const s = game.state, viewer = game.humanColor || s.turn;
-  const shown = (e) => {
-    if (s.fog === viewer && e.hiddenFrom === viewer && !game.over) return '???';
-    return (e.ev ? `<span class="ev" style="--c:${CELLS[e.ev].color}"></span>` : '') + e.san;
-  };
+  const shown = (e) => (e.ev ? `<span class="ev" style="--c:${CELLS[e.ev].color}"></span>` : '') + e.san;
   const rows = [];
   for (const e of hist) {
     const last = rows[rows.length - 1];
@@ -528,7 +470,7 @@ function renderHistory() {
 }
 
 function legendRows() {
-  return Object.entries(CELLS).map(([k, C]) =>
+  return Object.values(CELLS).map((C) =>
     `<div class="legend-row" style="--c:${C.color}"><div class="legend-sw"></div><div><b>${C.name.toUpperCase()}</b><span>${C.desc}</span></div></div>`,
   ).join('');
 }
@@ -538,12 +480,78 @@ function renderLegend() {
   $('#cellsLegend').innerHTML = legendRows();
 }
 
+// ---------------------------------------------------------------- диско-волна
+
+let discoTimer = null;
+function stopDisco() {
+  clearInterval(discoTimer);
+  const layer = $('#disco');
+  if (layer) layer.classList.remove('on');
+}
+
+// Волна цвета расходится кольцами от найденной клетки, затем весь пол
+// вспыхивает цветом события. Возвращает промис, который выполняется по окончании.
+function discoWave(origin, color) {
+  const { W, H } = game.state;
+  let layer = $('#disco');
+  if (!layer) {
+    layer = h('div', 'disco');
+    layer.id = 'disco';
+    wrapEl.insertBefore(layer, piecesEl);
+  }
+  stopDisco();
+  layer.style.gridTemplateColumns = `repeat(${W}, 1fr)`;
+  layer.style.gridTemplateRows = `repeat(${H}, 1fr)`;
+  layer.innerHTML = '';
+  const o = disp(origin);
+  const tiles = [];
+  for (let row = 0; row < H; row++) {
+    for (let col = 0; col < W; col++) {
+      const t = h('i');
+      layer.appendChild(t);
+      const dist = Math.max(Math.abs(row - o.row), Math.abs(col - o.col));
+      tiles.push({ t, dist, colors: [0, 1, 2].map(() => NEON[Math.floor(Math.random() * NEON.length)]) });
+    }
+  }
+  const maxDist = Math.max(...tiles.map((x) => x.dist));
+  const STEP = 70, WAVES = 3, GAP = 260, GLOW = 230;
+  const wavesEnd = (WAVES - 1) * GAP + maxDist * STEP + GLOW;
+  const total = wavesEnd + 520;
+  layer.classList.add('on');
+  sound.disco();
+  const t0 = performance.now();
+  return new Promise((resolve) => {
+    discoTimer = setInterval(() => {
+      const t = performance.now() - t0;
+      if (t >= total) {
+        stopDisco();
+        resolve();
+        return;
+      }
+      if (t >= wavesEnd) {
+        // финальная вспышка цветом события
+        const on = Math.floor((t - wavesEnd) / 130) % 2 === 0;
+        for (const x of tiles) x.t.style.background = on ? color : 'transparent';
+        return;
+      }
+      for (const x of tiles) {
+        let c = 'transparent';
+        for (let w = 0; w < WAVES; w++) {
+          const start = w * GAP + x.dist * STEP;
+          if (t >= start && t < start + GLOW) c = w === WAVES - 1 ? color : x.colors[w];
+        }
+        x.t.style.background = c;
+      }
+    }, 30);
+  });
+}
+
 // ---------------------------------------------------------------- эффекты
 
 function center(sq, clamp = false) {
   const { row, col } = disp(sq), { W, H } = game.state;
   let left = ((col + 0.5) * 100) / W;
-  if (clamp) left = Math.min(80, Math.max(20, left)); // надписи не уезжают за край доски
+  if (clamp) left = Math.min(75, Math.max(25, left)); // надписи не уезжают за край доски
   return { left: left + '%', top: ((row + 0.5) * 100) / H + '%' };
 }
 
@@ -575,39 +583,6 @@ function shake(delay = 0) {
   }, delay);
 }
 
-// Диско-пол: клетки мигают случайными цветами, в конце вся доска вспыхивает цветом события.
-const DISCO = ['#ff4fd8', '#29ffe0', '#ffe94d', '#8f5bff', '#ff3b5c', '#3fa9ff', '#a7f070', '#ff9d3b'];
-let discoTimer = null;
-function disco(color) {
-  const { W, H } = game.state;
-  let layer = $('#disco');
-  if (!layer) {
-    layer = h('div', 'disco');
-    layer.id = 'disco';
-    wrapEl.insertBefore(layer, $('#pieces'));
-  }
-  clearInterval(discoTimer);
-  layer.style.gridTemplateColumns = `repeat(${W}, 1fr)`;
-  layer.style.gridTemplateRows = `repeat(${H}, 1fr)`;
-  layer.innerHTML = '<i></i>'.repeat(W * H);
-  const tiles = [...layer.children];
-  const palette = [...DISCO, color, color, color];
-  layer.classList.add('on');
-  let tick = 0;
-  sound.disco();
-  discoTimer = setInterval(() => {
-    tick++;
-    if (tick < 14) {
-      for (const t of tiles) t.style.background = Math.random() < 0.18 ? 'transparent' : palette[Math.floor(Math.random() * palette.length)];
-    } else if (tick < 18) {
-      for (const t of tiles) t.style.background = tick % 2 ? color : 'transparent';
-    } else {
-      clearInterval(discoTimer);
-      layer.classList.remove('on');
-    }
-  }, 110);
-}
-
 const bannerQueue = [];
 let bannerBusy = false;
 function banner(b) {
@@ -619,7 +594,7 @@ function nextBanner() {
   const el = $('#banner');
   if (!b) { bannerBusy = false; return; }
   bannerBusy = true;
-  el.style.setProperty('--c', b.color || '#ffcd75');
+  el.style.setProperty('--c', b.color || '#ffe14d');
   el.innerHTML = `<div class="b-title">${b.title}</div>${b.text ? `<div class="b-text">${b.text}</div>` : ''}`;
   el.classList.remove('show');
   void el.offsetWidth;
@@ -631,41 +606,26 @@ function nextBanner() {
 }
 
 function playFx(fx) {
-  let meteorIdx = 0;
   for (const f of fx) {
     switch (f.kind) {
       case 'capture':
-        fxAt(f.sq, 'burst', { color: '#f4f4f4', life: 500 });
-        sparks(f.sq, '#f4f4f4');
+        fxAt(f.sq, 'burst', { color: '#ffffff', life: 500 });
+        sparks(f.sq, '#ffffff');
         break;
       case 'trigger': {
         const C = CELLS[f.type];
-        disco(C.color);
-        fxAt(f.sq, 'flash', { color: C.color, life: 750 });
         sparks(f.sq, C.color);
-        fxAt(f.sq, 'label', { text: C.name.toUpperCase() + '!', color: C.color, delay: 100 });
-        const text = f.type === 'meteor' ? `Цели на половине ${GEN[opp(f.by)].toLowerCase()} — удар через 2 хода`
-          : f.type === 'fog' ? `${NAME[opp(f.by)]} ослеплены на 3 хода` : 'Дальнобойные фигуры бьют лишь на 3 клетки';
-        setTimeout(() => banner({ title: TRIGGER_TITLE[f.type], text, color: C.color, time: 2200 }), 900);
-        setTimeout(() => sound.trigger(f.type), 1700);
         shake(0);
+        sound.trigger(f.type);
+        if (f.type === 'lava') banner({ title: 'ПОЛ — ЭТО ЛАВА!', text: 'На 3 хода по лаве нельзя ходить и сквозь неё нельзя бить', color: C.color, time: 2200 });
+        else banner({ title: 'ЗЕРКАЛО!', text: 'Доска отразилась: фланги поменялись местами, рокировки больше нет', color: C.color, time: 2200 });
         break;
       }
-      case 'meteorKill':
-      case 'meteorHit': {
-        const delay = meteorIdx++ * 170;
-        fxAt(f.sq, 'meteor', { delay, life: 520, style: bg(iconSprite('meteor', CELLS.meteor.color)) });
-        fxAt(f.sq, 'boom', { delay: delay + 480, life: 650 });
-        sparks(f.sq, '#ef7d57', delay + 480);
-        setTimeout(() => sound.boom(), delay + 480);
-        shake(delay + 480);
-        break;
-      }
-      case 'meteorBlocked':
-        fxAt(f.sq, 'label', { text: 'КОРОЛЬ УСТОЯЛ', color: '#ffcd75', delay: 500 });
+      case 'lava':
+        f.squares.forEach((sq, i) => fxAt(sq, 'burst', { color: '#ff5a00', delay: (i % 8) * 40, life: 500 }));
         break;
       case 'eventEnd':
-        banner({ title: END_TITLE[f.type], color: '#a7f070', time: 1300 });
+        banner({ title: 'ЛАВА ОСТЫЛА', color: '#39ff14', time: 1300 });
         sound.end(false);
         break;
     }
@@ -766,7 +726,7 @@ let lastTick = performance.now();
 setInterval(() => {
   const now = performance.now(), dt = now - lastTick;
   lastTick = now;
-  if (!game || !game.clocks || game.over || coverOn || !game.history.length) return;
+  if (!game || !game.clocks || game.over || animLock || !game.history.length) return;
   const c = game.state.turn;
   game.clocks[c] = Math.max(0, game.clocks[c] - dt);
   renderClocks();
@@ -809,7 +769,6 @@ $('#btnRules').onclick = () => $('#dlgRules').showModal();
 $('#btnRulesOk').onclick = () => $('#dlgRules').close();
 $('#btnUndo').onclick = undo;
 $('#btnFlip').onclick = () => { flipped = !flipped; buildBoard(); render(); };
-$('#coverBtn').onclick = () => { hideCover(); render(); };
 const soundBtn = $('#btnSound');
 const syncSoundBtn = () => { soundBtn.textContent = sound.muted ? 'ЗВУК: ВЫКЛ' : 'ЗВУК: ВКЛ'; };
 soundBtn.onclick = () => { sound.toggle(); syncSoundBtn(); };
@@ -836,7 +795,7 @@ window.arena = {
   },
 };
 
-// Для скриншотов и отладки: index.html#cells=c5:meteor;moves=c2c4,d9d8,c4c5
+// Для скриншотов и отладки: index.html#cells=d5:lava;moves=d2d4,a13a12,d4d5
 if (location.hash.length > 1) {
   const params = Object.fromEntries(location.hash.slice(1).split(';').map((x) => x.split('=')));
   if (params.cells || params.moves) dlgNew.close();
@@ -845,7 +804,7 @@ if (location.hash.length > 1) {
     game.state.cells = Object.fromEntries(params.cells.split(',').map((x) => x.split(':')).map(([sq, type]) => [at(sq), { type }]));
   }
   for (const mv of (params.moves || '').split(',')) {
-    const [, from, to, promo] = mv.match(/^([a-l]\d+)([a-l]\d+)([qrbn])?$/) || [];
+    const [, from, to, promo] = mv.match(/^([a-n]\d+)([a-n]\d+)([qrbn])?$/) || [];
     if (from) window.arena.play(from, to, promo);
   }
 }

@@ -73,9 +73,8 @@ export const sound = {
   check() { arp([988, 740, 988], 0.07, { gain: 0.045 }); },
   start() { arp([523, 659, 784, 1046], 0.07, { gain: 0.05 }); },
   trigger(type) {
-    if (type === 'meteor') { arp([880, 660, 440, 330], 0.06, { gain: 0.05 }); noise(0.3, { gain: 0.08, freq: 1500, delay: 0.1 }); }
-    else if (type === 'fog') { noise(0.6, { gain: 0.1, freq: 900 }); arp([392, 349, 330], 0.12, { type: 'triangle', gain: 0.07 }); }
-    else { arp([784, 622, 523, 392, 311], 0.08, { type: 'triangle', gain: 0.07 }); }
+    if (type === 'lava') { noise(0.8, { gain: 0.2, freq: 500 }); arp([330, 262, 196, 147, 110], 0.09, { gain: 0.06 }); }
+    else { arp([392, 523, 659, 784, 1046, 784, 659, 523], 0.05, { type: 'triangle', gain: 0.07 }); }
   },
   disco() {
     // «дискотечный» бит: бочка + арпеджио

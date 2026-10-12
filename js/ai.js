@@ -1,5 +1,5 @@
 // Бот: альфа-бета поиск + форсированные взятия. Использует тот же генератор ходов,
-// что и игра, поэтому понимает клетки событий, ночь, кратеры и летящие метеориты.
+// что и игра, поэтому понимает лаву и любую доску. Где спрятаны клетки, бот не знает.
 import { pseudoMoves, applyMove, inCheck, VALUES } from './engine.js';
 
 const MATE = 100000;
@@ -37,13 +37,6 @@ export function evaluate(s) {
         break;
     }
     score += p.c === 'w' ? v : -v;
-  }
-  const ev = s.event;
-  if (ev && ev.type === 'meteor') {
-    for (const t of ev.targets) {
-      const p = b[t];
-      if (p && p.t !== 'k') score -= (p.c === 'w' ? 1 : -1) * VALUES[p.t] * 0.8;
-    }
   }
   return score + (s.turn === 'w' ? 10 : -10);
 }
